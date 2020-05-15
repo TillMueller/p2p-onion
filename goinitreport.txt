@@ -1,0 +1,59 @@
+1.
+Team Name: [TODO]
+Team members:
+	- Valentin Langer, ga27set@mytum.de
+	- Till Müller, ga53kiz@mytum.de
+Module: Onion (39943)
+
+2.
+Language: Go
+Reasons:
+	- efficient and statically typed
+	- good learning resources
+	- cute mascot
+	- strong standard library (for basic networking and cryptography)
+	- memory management is done automatically
+	- includes formatting, building and testing resources
+	- focused on networking and multithreaded tasks
+	- straightforward way of using concurrency
+	- Both team members have had limited exposure to Go and a keen on experiencing a new programming language used by one of the largest technology companies in the world
+	- raises our prospects in the job market (-> TUM employability score!)
+OS: GNU/Linux
+Reasons: 
+	- Free (as in "free speech") software 
+	- easily programmable and we have experience with it
+	- often used for server and software development applications
+	- good integration with the Go environment
+
+3.
+Build environment: Build tools included with go, if necessary wrapped in Docker for a consistent environment
+
+4.
+ Tests: internal tools provided by Go? (unit tests, integration tests)
+Quality Control: Create a program that sends many API requests to the application (parallel, bad ones, etc.); the application should not crash
+Leverage the continuous integration tools provided by Gitlab to run tests automatically when an update is pushed
+5. Available Libraries: 
+    - All libraries provided by Go plus the ones we download
+    - "net" for networking tasks
+    - concurrency is provided by goroutines
+    - cryptography using the "crypto" library
+    - "bytes" for manipulating byte-slices
+    - "time" for time-keeping tasks / timestamps
+    - debugging facilities are provided by the "debugging" library
+    - if we need to make systemcalls, this functionality is enabled by the "sys" library
+    - For status in-/output the "text" library might come in useful
+    - A suitable library to parse configuration ini files, possibly go-ini (https://github.com/go-ini/ini)
+6. License: MIT, BSD, Mozilla, GPL2, GPL3, Creative Commons
+	- Software should be open source to enable others to learn from our mistakes
+	- We want to brag to potential future employers
+	- Also, we do not intend to ever sell / otherwise financially benefit from this software
+
+7. Previous programming experience
+	- Both team members have had experience with programming in low-level languages (e.g. C) and networking (GRNVS lecture, iLab1)
+	- Multithreading has been a part of PGdP (Praktikum Grundlagen der Programmierung)
+
+8. Planned workload distribution
+	- The team members intend to split up the work into parts that are as equal in the effort required to produce them as possible
+	- Architecturial and design decisions will be discussed and made together
+	- Pair programming will be a major part of the implementation phase
+	- Either team member will review and test the code written by the other
