@@ -1,0 +1,96 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{cite}
+
+\title{\textbf{P2P Systems and Security - Initial Report \\ Team Onion-16 \\ Team name: hAcKiNg\_tHe\_mAinFrAmE \\ Module: Onion (39943)}}
+\author{
+  Langer, Valentin\\
+  \texttt{valentin.langer@tum.de}
+  \and
+  M\"uller, Till\\
+  \texttt{till.mueller@tum.de}
+}
+
+\date{15. May 2020}
+
+\begin{document}
+
+\maketitle
+
+\section{Languge and Operating System Choice}
+\subsection{Language}
+We have chosen to use the Go \cite{golang} language for our implementation.
+This enables us to create an efficient implementation of our module without having to worry about garbage collection. Go also provides a solid standard library as a starting point for our endeavors, as well as an easy way of dealing with concurrency, which is especially relevant networking domain for creating high-throughput, functional software. Lastly, Google has provided excellent learning resources for new Go developers, allowing us to escape a lot of the headache of learning new languages.
+
+\subsection{Operating System}
+The operating system we have decided to use to base our system on is \emph{GNU/Linux}.
+We will try to maintain compatibility with many distributions as possible, but might resort to using Docker \cite{docker} to maintain portability between differing systems.
+
+Since both of us have significant experience working with \emph{GNU/Linux} and are aware of its role within the application hosting and software development world, this decision was an easy one to make.
+Of course, the fact that it is free open-source software (FOSS) was also counted in its favor, as well as the good integration \emph{GNU/Linux} has with the existing Go environment.
+
+\section{Build System}
+We will mainly focus on using the build tools included with Go.
+As mentioned, Docker could also be used to provide a consistent environment for building the application.
+Apart from that we do not expect to require further build tools to compile our software since we do not intent to stray too far away from the default libraries and support setups.
+
+\section{Measures to Guarantee Quality}
+For testing and quality assurance purposes, we will base our testing suite on the tools provided by the Go language itself \cite{gotest}.
+After a brief read through their documentation, these tools should be sufficient for testing all functionality where we want to ensure they are working properly.
+
+\section{Helper Libraries}
+As part of our objective of keeping our code simple to compile and compatible to as many systems as possible, we will try to use as few non-standard libraries as possible.
+From the standard libraries \cite{standardlibrary}, we plan on using these packages:
+
+\begin{center}
+	\begin{tabular}{|c|c|}
+	    \hline
+	    Library name & Use case within our application \\
+	    \hline
+	    net & networking tasks \\
+	    crypto & cryptography functions and hashing \\
+	    bytes & manipulating byte slices \\
+	    time & for time-keeping tasks / timestamps \\
+	    sys & provides syscall functionalities \\
+	    text & formatting and working with strings for output \\
+	    \hline
+	\end{tabular}
+\end{center}
+
+\noindent Apart from these we also intend to use the \texttt{ini} package for Go \cite{goini}.
+This is required to read from and write to configuration files as defined by the specification.
+
+\section{Licensing}
+We will use the MIT \cite{mit} license, since our only motivation for writing this software is learning about peer to peer architectures, completing this course, and potentially showcasing the source code to interested parties. As opposed to some copyleft licenses \cite{agpl}, it also frees us from any additional responsibilities like having to send the source code when prompted.
+
+\section{Previous Experience}
+Both of us have experience with low-level languages (C) and networking (Grundlagen: Rechnernetze und verteilte Systeme [GRNVS] lecture \cite{grnvs} and iLab1 \cite{ilab1}). The basic concepts of multi-threading were a part of Praktikum: Grundlagen der Programmierung (PGdP) and reiterated in the Operating Systems course.
+
+\section{Planned Workload Distribution}
+We intend to split up the work into parts of equal effort, and will discuss and decide on architectural decisions together. To reduce errors in a langauge we are both not yet well versed in, we will use pair programming extensively. This will also ensure that we are always on the same page in terms of understanding the control flow of the program.
+
+\begin{thebibliography}{9}
+    \bibitem{golang} 
+        \url{https://golang.org/}
+    \bibitem{ubuntu}
+        \url{https://ubuntu.com/}
+    \bibitem{mit}
+        \url{https://opensource.org/licenses/MIT}
+    \bibitem{agpl}
+        \url{https://www.gnu.org/licenses/agpl-3.0.de.html}
+    \bibitem{gotest}
+        \url{https://golang.org/pkg/testing/}
+    \bibitem{grnvs}
+        \url{https://grnvs.net.in.tum.de/}
+    \bibitem{ilab1}
+        \url{https://ilab.net.in.tum.de/}
+    \bibitem{goini}
+        \url{https://github.com/go-ini/ini}
+    \bibitem{standardlibrary}
+	\url{https://golang.org/pkg/#stdlib}
+    \bibitem{docker}
+        \url{https://www.docker.com/}
+\end{thebibliography}
+
+\end{document}
