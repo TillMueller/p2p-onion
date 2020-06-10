@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"onion/dh"
+	"onion/encryption"
 	"onion/logger"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type symmetricKeys struct {
 }
 
 var keyMap = symmetricKeys{data: make(map[string][]byte)}
+var waitForDHChannel = make(chan bool, 1)
 
 type keyPair struct {
 	privateKey []byte
@@ -122,9 +124,10 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		keyMap.mutex.Lock()
 		keyMap.data[addrString] = sharedSecret
 		keyMap.mutex.Unlock()
+		waitForDHChannel <- true
 		return
 	}
-	// we have received the first handshake message and need to generate our key pair
+	// we have received the first handshake message and need to generate our keypair
 	privateKey, publicKey, err := dh.GenKeyPair()
 	if err != nil {
 		logger.Error.Println("Could not generate keypair")
@@ -140,6 +143,7 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	keyMap.mutex.Lock()
 	keyMap.data[addrString] = sharedSecret
 	keyMap.mutex.Unlock()
+	waitForDHChannel <- true
 	packet, err := padPacket(append([]byte{0}, publicKey...))
 	if err != nil {
 		logger.Error.Println("Could not pad packet")
@@ -158,7 +162,8 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	// call callback(flowID, data)
 	// consideration: maybe ratelimit at some point per IP? premature optimization is the root of all evil
 	if data[0]&1 == 0 {
-		logger.Info.Println("Got DH keyexchange from " + getUDPAddrString(addr))
+		addrStr, _ := getUDPAddrString(addr)
+		logger.Info.Println("Got DH keyexchange from " + addrStr)
 		handleDHExchange(udpconn, addr, data)
 		return
 	}
@@ -166,6 +171,7 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 }
 
 // SendPacket sends a packet conforming to our onion hop layer protocol
+// Blocks until data is sent or an error is generated
 func SendPacket(addr string, data []byte) error {
 	if len(data) > packetLength {
 		logger.Error.Println("Packet too long")
@@ -182,8 +188,56 @@ func SendPacket(addr string, data []byte) error {
 	keyMap.mutex.Lock()
 	key, exists := keyMap.data[addrString]
 	keyMap.mutex.Unlock()
-	if exists {
-		// encrypt and send packet
+	if !exists {
+		// We haven't established a shared secret, so we must perform DH
+		logger.Info.Println("Did not find existing key for " + addr + ". Attempting to create one via DH.")
+		privateKey, publicKey, err := dh.GenKeyPair()
+		if err != nil {
+			logger.Error.Println("Could not generate keypair")
+			return errors.New("internalError")
+		}
+		keyPair := keyPair{privateKey, publicKey}
+		openDHs.mutex.Lock()
+		openDHs.data[addrString] = keyPair
+		openDHs.mutex.Unlock()
+		packet, err := padPacket(append([]byte{0}, publicKey...))
+		if err != nil {
+			logger.Error.Println("Could not pad packet")
+			return errors.New("internalError")
+		}
+		sendingUDPConn.WriteToUDP(packet[:], receiverAddress)
+		// wait until DH is done
+		for {
+			keyMap.mutex.Lock()
+			key, exists = keyMap.data[addrString]
+			keyMap.mutex.Unlock()
+			if exists {
+				break
+			}
+			<-waitForDHChannel
+		}
 	}
+	// TODO sequence numbers
+	// encrypt
+	ciphertext, err := encryption.Encrypt(key, data)
+	if err != nil {
+		logger.Error.Println("Could not encrypt packet")
+		return errors.New("internalError")
+	}
+	// add flags
+	ciphertext = append([]byte{0x1}, ciphertext...)
+	// pad
+	paddedCiphertext, err := padPacket(ciphertext)
+	if err != nil {
+		logger.Error.Println("Could not pad packet")
+		return errors.New("internalError")
+	}
+	// sanity check
+	if len(paddedCiphertext) != packetLength {
+		logger.Error.Println("Packet has wrong size")
+		return errors.New("invalidArgumentError")
+	}
+	// send
+	sendingUDPConn.WriteToUDP(paddedCiphertext[:], receiverAddress)
 	return nil
 }

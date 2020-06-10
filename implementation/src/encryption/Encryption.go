@@ -11,7 +11,7 @@ import (
 // Encrypt encrypts a plaintext using AES with the given key
 // An IV will be regenerated every time and prepended to the encrypted data
 // adapted from https://golang.org/src/crypto/cipher/example_test.go
-func Encrypt(key [32]byte, text []byte) ([]byte, error) {
+func Encrypt(key []byte, text []byte) ([]byte, error) {
 	plaintext := []byte(text)
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
@@ -29,7 +29,7 @@ func Encrypt(key [32]byte, text []byte) ([]byte, error) {
 // Decrypt decrypts a ciphertext using AES with the given key
 // It assumes that the first 16 bytes of the ciphertext are the IV
 // adapted from https://golang.org/src/crypto/cipher/example_test.go
-func Decrypt(key [32]byte, ciphertext []byte) ([]byte, error) {
+func Decrypt(key []byte, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		logger.Error.Println("Invalid key")

@@ -29,11 +29,8 @@ func TestPadPacketValidInput(t *testing.T) {
 
 func callbackDummy(n int, data []byte) {}
 
+//unfinished
 func TestDiffieHellmanExchange(t *testing.T) {
 	SubscribeTo("localhost:65500", callbackDummy)
 	SubscribeTo("localhost:65501", callbackDummy)
 }
-
-//subscribeTo
-//listen
-//handleDHExchange
