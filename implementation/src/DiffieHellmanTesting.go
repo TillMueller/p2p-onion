@@ -4,6 +4,7 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 
@@ -95,7 +96,8 @@ func encrypt(text string, sharedSecret []byte) {
 	plaintext := []byte(text)
 	block, _ := aes.NewCipher(sharedSecret)
 	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
-	iv := ciphertext[:aes.BlockSize]
+	iv := make([]byte, aes.BlockSize)
+	rand.Read(iv)
 	stream := cipher.NewCFBEncrypter(block, iv)
 	stream.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
 	fmt.Println(base64.URLEncoding.EncodeToString(ciphertext))

@@ -1,4 +1,4 @@
-package main
+package dh
 
 import (
 	"errors"
@@ -6,7 +6,8 @@ import (
 	"github.com/spacemonkeygo/openssl"
 )
 
-func genKeyPair() ([]byte, []byte, error) {
+// GenKeyPair generates a public/private keypair
+func GenKeyPair() ([]byte, []byte, error) {
 	privatekey, err := openssl.GenerateECKey(openssl.Prime256v1)
 	if err != nil {
 		return nil, nil, errors.New("Could not generate private key")
@@ -21,7 +22,8 @@ func genKeyPair() ([]byte, []byte, error) {
 	return privateKeyBytes, publicKeyBytes, nil
 }
 
-func deriveSharedSecret(publicKeyBytes []byte, privateKeyBytes []byte) ([]byte, error) {
+// DeriveSharedSecret creates a shared secret from a public and a private key pair
+func DeriveSharedSecret(publicKeyBytes []byte, privateKeyBytes []byte) ([]byte, error) {
 	privateKey, err := openssl.LoadPrivateKeyFromPEM(privateKeyBytes)
 	if err != nil {
 		return nil, errors.New("Could not load private key")

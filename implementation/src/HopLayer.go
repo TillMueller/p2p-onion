@@ -3,8 +3,9 @@ package main
 import (
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"net"
+	"onion/dh"
+	"onion/logger"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,14 +44,16 @@ var sendingUDPConn *net.UDPConn
 func getUDPAddrString(addr *net.UDPAddr) (string, error) {
 	addrString := addr.String()
 	if addrString == "<nil>" || (!strings.Contains(addrString, ".") && !strings.Contains(addrString, ":")) {
-		return "<nil>", errors.New("Could not convert UDP address to valid string")
+		logger.Error.Println("Could not convert UDP address to valid string")
+		return "<nil>", errors.New("invalidArgumentError")
 	}
 	return addrString + ":" + strconv.Itoa(addr.Port), nil
 }
 
 func padPacket(in []byte) ([packetLength]byte, error) {
 	if len(in) > packetLength {
-		return [packetLength]byte{}, errors.New("Cannot cut packet longer than packetLength")
+		logger.Error.Println("Cannot cut packet longer than packetLength")
+		return [packetLength]byte{}, errors.New("invalidArgumentError")
 	}
 	out := [packetLength]byte{}
 	bytesCopied := copy(out[:], in)
@@ -64,21 +67,21 @@ func padPacket(in []byte) ([packetLength]byte, error) {
 // the callback function should handle onion L3 packets
 // listening address can just be a port (":1234") or also include an address
 // ("5.6.7.8:1234")
-func SubscribeTo(listeningAddress string, callback func(int, []byte)) bool {
+func SubscribeTo(listeningAddress string, callback func(int, []byte)) error {
 	udpaddr, err := net.ResolveUDPAddr("udp", listeningAddress)
 	if err != nil {
-		fmt.Printf("Listening address invalid")
-		return false
+		logger.Error.Println("Listening address invalid")
+		return errors.New("invalidArgumentError")
 	}
 	udpconn, err := net.ListenUDP("udp", udpaddr)
 	sendingUDPConn = udpconn
 	if err != nil {
-		fmt.Printf("Cannot create listening port")
 		defer udpconn.Close()
-		return false
+		logger.Error.Println("Cannot create listening port")
+		return errors.New("networkError")
 	}
 	go listen(udpconn, callback)
-	return true
+	return nil
 }
 
 func listen(udpconn *net.UDPConn, callback func(int, []byte)) {
@@ -86,6 +89,7 @@ func listen(udpconn *net.UDPConn, callback func(int, []byte)) {
 		buf := make([]byte, packetLength)
 		curLength, addr, err := udpconn.ReadFromUDP(buf)
 		if err != nil || curLength != packetLength {
+			logger.Warning.Println("Skipping incoming packet")
 			continue
 		}
 		go handleIncomingPacket(udpconn, addr, buf, callback)
@@ -106,10 +110,10 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	value, exists := openDHs.data[addrString]
 	openDHs.mutex.Unlock()
 	if exists {
-		sharedSecret, err := deriveSharedSecret(value.privateKey, peerPublicKey)
+		sharedSecret, err := dh.DeriveSharedSecret(value.privateKey, peerPublicKey)
 		if err != nil {
-			fmt.Printf("Could not derive shared secret")
-			fmt.Printf(err.Error())
+			logger.Error.Println("Could not derive shared secret")
+			logger.Error.Println(err.Error())
 			return
 		}
 		openDHs.mutex.Lock()
@@ -121,16 +125,16 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		return
 	}
 	// we have received the first handshake message and need to generate our key pair
-	privateKey, publicKey, err := genKeyPair()
+	privateKey, publicKey, err := dh.GenKeyPair()
 	if err != nil {
-		fmt.Printf("Could not generate keypair")
-		fmt.Printf(err.Error())
+		logger.Error.Println("Could not generate keypair")
+		logger.Error.Println(err.Error())
 		return
 	}
-	sharedSecret, err := deriveSharedSecret(privateKey, peerPublicKey)
+	sharedSecret, err := dh.DeriveSharedSecret(privateKey, peerPublicKey)
 	if err != nil {
-		fmt.Printf("Could not derive shared secret")
-		fmt.Printf(err.Error())
+		logger.Error.Println("Could not derive shared secret")
+		logger.Error.Println(err.Error())
 		return
 	}
 	keyMap.mutex.Lock()
@@ -138,8 +142,8 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	keyMap.mutex.Unlock()
 	packet, err := padPacket(append([]byte{0}, publicKey...))
 	if err != nil {
-		fmt.Printf("Could not pad packet")
-		fmt.Printf(err.Error())
+		logger.Error.Println("Could not pad packet")
+		logger.Error.Println(err.Error())
 		return
 	}
 	udpconn.WriteToUDP(packet[:], addr)
@@ -154,6 +158,7 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	// call callback(flowID, data)
 	// consideration: maybe ratelimit at some point per IP? premature optimization is the root of all evil
 	if data[0]&1 == 0 {
+		logger.Info.Println("Got DH keyexchange from " + getUDPAddrString(addr))
 		handleDHExchange(udpconn, addr, data)
 		return
 	}
@@ -162,6 +167,10 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 
 // SendPacket sends a packet conforming to our onion hop layer protocol
 func SendPacket(addr string, data []byte) error {
+	if len(data) > packetLength {
+		logger.Error.Println("Packet too long")
+		return errors.New("invalidArgumentError")
+	}
 	receiverAddress, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return err
