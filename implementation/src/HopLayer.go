@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -34,31 +36,97 @@ type openDHHandshakes struct {
 
 var openDHs = openDHHandshakes{data: make(map[net.Addr]keyPair)}
 
+func padPacket(in []byte) ([packetLength]byte, error) {
+	if len(in) > packetLength {
+		return [packetLength]byte{}, errors.New("Cannot cut packet longer than packetLength")
+	}
+	out := [packetLength]byte{}
+	bytesCopied := copy(out[:], in)
+	paddingBytes := make([]byte, packetLength-bytesCopied)
+	rand.Read(paddingBytes)
+	copy(out[:], paddingBytes)
+	return out, nil
+}
+
 // listening address can just be a port (":1234") or also include an address
 // ("5.6.7.8:1234")
 func subscribeTo(listeningAddress string, callback func(int, []byte)) bool {
-	pc, err := net.ListenPacket("udp", listeningAddress)
+	udpaddr, err := net.ResolveUDPAddr("udp", listeningAddress)
 	if err != nil {
-		fmt.Printf("Cannot create listening port")
-		defer pc.Close()
+		fmt.Printf("Listening address invalid")
 		return false
 	}
-	go listen(pc, callback)
+	udpconn, err := net.ListenUDP("udp", udpaddr)
+	if err != nil {
+		fmt.Printf("Cannot create listening port")
+		defer udpconn.Close()
+		return false
+	}
+	go listen(udpconn, callback)
 	return true
 }
 
-func listen(pc net.PacketConn, callback func(int, []byte)) {
+func listen(udpconn *net.UDPConn, callback func(int, []byte)) {
 	for {
 		buf := make([]byte, packetLength)
-		n, addr, err := pc.ReadFrom(buf)
-		if err != nil || n != packetLength {
+		curLength, addr, err := udpconn.ReadFromUDP(buf)
+		if err != nil || curLength != packetLength {
 			continue
 		}
-		go handleIncomingPacket(addr, buf, callback)
+		go handleIncomingPacket(udpconn, addr, buf, callback)
 	}
 }
 
-func handleIncomingPacket(addr net.Addr, data []byte, callback func(int, []byte)) {
+func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
+	// we are receiving a handshake response
+	// extract public key from packet
+	// first byte is reserved / DH flag
+	peerPublicKey := data[1:33]
+	// read from map synchronously
+	openDHs.mutex.Lock()
+	value, exists := openDHs.data[addr]
+	openDHs.mutex.Unlock()
+	if exists {
+		sharedSecret, err := deriveSharedSecret(value.privateKey, peerPublicKey)
+		if err != nil {
+			fmt.Printf("Could not derive shared secret")
+			fmt.Printf(err.Error())
+			return
+		}
+		openDHs.mutex.Lock()
+		delete(openDHs.data, addr)
+		openDHs.mutex.Unlock()
+		keyMap.mutex.Lock()
+		keyMap.data[addr] = sharedSecret
+		keyMap.mutex.Unlock()
+		return
+	}
+	// we have received the first handshake message and need to generate our key pair
+	privateKey, publicKey, err := genKeyPair()
+	if err != nil {
+		fmt.Printf("Could not generate keypair")
+		fmt.Printf(err.Error())
+		return
+	}
+	sharedSecret, err := deriveSharedSecret(privateKey, peerPublicKey)
+	if err != nil {
+		fmt.Printf("Could not derive shared secret")
+		fmt.Printf(err.Error())
+		return
+	}
+	keyMap.mutex.Lock()
+	keyMap.data[addr] = sharedSecret
+	keyMap.mutex.Unlock()
+	packet, err := padPacket(append([]byte{0}, publicKey...))
+	if err != nil {
+		fmt.Printf("Could not pad packet")
+		fmt.Printf(err.Error())
+		return
+	}
+	udpconn.WriteToUDP(packet[:], addr)
+}
+
+func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, callback func(int, []byte)) {
 	// [0x01|0x00]((packetLength - 1)*[0xYY]) starting flag indicates whether packet is DH param (=0x0) or regular data message (0x1)
 	// check if this is a Diffie-Hellman handshake
 	// if it is: respond and save the key in the keystore in case we do not have a key with this address already
@@ -67,40 +135,8 @@ func handleIncomingPacket(addr net.Addr, data []byte, callback func(int, []byte)
 	// call callback(flowID, data)
 	// consideration: maybe ratelimit at some point per IP? premature optimization is the root of all evil
 	if data[0]&1 == 0 {
-		peerPublicKey := data[1:33]
-		// read from map synchronously
-		openDHs.mutex.Lock()
-		value, exists := openDHs.data[addr]
-		openDHs.mutex.Unlock()
-		if exists {
-			// we are receiving a handshake response
-			// extract public key from packet
-			// first byte is reserved / DH flag
-			sharedSecret, err := deriveSharedSecret(value.privateKey, peerPublicKey)
-			if err != nil {
-				return
-			}
-			openDHs.mutex.Lock()
-			delete(openDHs.data, addr)
-			openDHs.mutex.Unlock()
-			keyMap.mutex.Lock()
-			keyMap.data[addr] = sharedSecret
-			keyMap.mutex.Unlock()
-			return
-		}
-		// we have received the first handshake message and need to generate our key pair
-		privateKey, publicKey, err := genKeyPair()
-		if err != nil {
-			return
-		}
-		sharedSecret, err := deriveSharedSecret(privateKey, peerPublicKey)
-		if err != nil {
-			return
-		}
-		keyMap.mutex.Lock()
-		keyMap.data[addr] = sharedSecret
-		keyMap.mutex.Unlock()
-		// send local public key to peer
+		handleDHExchange(udpconn, addr, data)
+		return
 	}
 	// this is not a Diffie-Hellman, we need to decrypt and handle data
 }
