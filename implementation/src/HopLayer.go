@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -17,11 +19,11 @@ var flowMap = make(map[string]int)
 var sequenceNumbersMap = make(map[int]int)
 
 type symmetricKeys struct {
-	data  map[net.Addr][]byte
+	data  map[string][]byte
 	mutex sync.Mutex
 }
 
-var keyMap = symmetricKeys{data: make(map[net.Addr][]byte)}
+var keyMap = symmetricKeys{data: make(map[string][]byte)}
 
 type keyPair struct {
 	privateKey []byte
@@ -30,11 +32,21 @@ type keyPair struct {
 
 // stores uncompleted DH Handshake
 type openDHHandshakes struct {
-	data  map[net.Addr]keyPair
+	data  map[string]keyPair
 	mutex sync.Mutex
 }
 
-var openDHs = openDHHandshakes{data: make(map[net.Addr]keyPair)}
+var openDHs = openDHHandshakes{data: make(map[string]keyPair)}
+
+var sendingUDPConn *net.UDPConn
+
+func getUDPAddrString(addr *net.UDPAddr) (string, error) {
+	addrString := addr.String()
+	if addrString == "<nil>" || (!strings.Contains(addrString, ".") && !strings.Contains(addrString, ":")) {
+		return "<nil>", errors.New("Could not convert UDP address to valid string")
+	}
+	return addrString + ":" + strconv.Itoa(addr.Port), nil
+}
 
 func padPacket(in []byte) ([packetLength]byte, error) {
 	if len(in) > packetLength {
@@ -48,15 +60,18 @@ func padPacket(in []byte) ([packetLength]byte, error) {
 	return out, nil
 }
 
+// SubscribeTo subscribes a callback function to a specific UDP address
+// the callback function should handle onion L3 packets
 // listening address can just be a port (":1234") or also include an address
 // ("5.6.7.8:1234")
-func subscribeTo(listeningAddress string, callback func(int, []byte)) bool {
+func SubscribeTo(listeningAddress string, callback func(int, []byte)) bool {
 	udpaddr, err := net.ResolveUDPAddr("udp", listeningAddress)
 	if err != nil {
 		fmt.Printf("Listening address invalid")
 		return false
 	}
 	udpconn, err := net.ListenUDP("udp", udpaddr)
+	sendingUDPConn = udpconn
 	if err != nil {
 		fmt.Printf("Cannot create listening port")
 		defer udpconn.Close()
@@ -84,7 +99,11 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	peerPublicKey := data[1:33]
 	// read from map synchronously
 	openDHs.mutex.Lock()
-	value, exists := openDHs.data[addr]
+	addrString, err := getUDPAddrString(addr)
+	if err != nil {
+		return
+	}
+	value, exists := openDHs.data[addrString]
 	openDHs.mutex.Unlock()
 	if exists {
 		sharedSecret, err := deriveSharedSecret(value.privateKey, peerPublicKey)
@@ -94,10 +113,10 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			return
 		}
 		openDHs.mutex.Lock()
-		delete(openDHs.data, addr)
+		delete(openDHs.data, addrString)
 		openDHs.mutex.Unlock()
 		keyMap.mutex.Lock()
-		keyMap.data[addr] = sharedSecret
+		keyMap.data[addrString] = sharedSecret
 		keyMap.mutex.Unlock()
 		return
 	}
@@ -115,7 +134,7 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		return
 	}
 	keyMap.mutex.Lock()
-	keyMap.data[addr] = sharedSecret
+	keyMap.data[addrString] = sharedSecret
 	keyMap.mutex.Unlock()
 	packet, err := padPacket(append([]byte{0}, publicKey...))
 	if err != nil {
@@ -141,6 +160,21 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	// this is not a Diffie-Hellman, we need to decrypt and handle data
 }
 
-func sendPacket(flowID int, data []byte) bool {
-	return false
+// SendPacket sends a packet conforming to our onion hop layer protocol
+func SendPacket(addr string, data []byte) error {
+	receiverAddress, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return err
+	}
+	addrString, err := getUDPAddrString(receiverAddress)
+	if err != nil {
+		return err
+	}
+	keyMap.mutex.Lock()
+	key, exists := keyMap.data[addrString]
+	keyMap.mutex.Unlock()
+	if exists {
+		// encrypt and send packet
+	}
+	return nil
 }
