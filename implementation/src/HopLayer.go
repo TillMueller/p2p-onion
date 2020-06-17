@@ -10,8 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"encoding/base64"
 )
 
+const PEMPubKeyLength = 178
 const packetLength = 1280
 
 // setup data structures for flow IDs, symmetric keys and sequence numbers
@@ -41,20 +43,18 @@ type openDHHandshakes struct {
 
 var openDHs = openDHHandshakes{data: make(map[string]keyPair)}
 
-var sendingUDPConn *net.UDPConn
-
 func getUDPAddrString(addr *net.UDPAddr) (string, error) {
 	addrString := addr.String()
 	if addrString == "<nil>" || (!strings.Contains(addrString, ".") && !strings.Contains(addrString, ":")) {
 		logger.Error.Println("Could not convert UDP address to valid string")
 		return "<nil>", errors.New("invalidArgumentError")
 	}
-	return addrString + ":" + strconv.Itoa(addr.Port), nil
+	return addrString, nil
 }
 
 func padPacket(in []byte) ([packetLength]byte, error) {
 	if len(in) > packetLength {
-		logger.Error.Println("Cannot cut packet longer than packetLength")
+		logger.Error.Println("Cannot pad packet longer than packetLength (" + strconv.Itoa(packetLength) + ")")
 		return [packetLength]byte{}, errors.New("invalidArgumentError")
 	}
 	out := [packetLength]byte{}
@@ -69,21 +69,21 @@ func padPacket(in []byte) ([packetLength]byte, error) {
 // the callback function should handle onion L3 packets
 // listening address can just be a port (":1234") or also include an address
 // ("5.6.7.8:1234")
-func SubscribeTo(listeningAddress string, callback func(int, []byte)) error {
+func SubscribeTo(listeningAddress string, callback func(int, []byte)) (*net.UDPConn, error) {
+	logger.Info.Println("Opening new listening connection: " + listeningAddress)
 	udpaddr, err := net.ResolveUDPAddr("udp", listeningAddress)
 	if err != nil {
 		logger.Error.Println("Listening address invalid")
-		return errors.New("invalidArgumentError")
+		return nil, errors.New("invalidArgumentError")
 	}
 	udpconn, err := net.ListenUDP("udp", udpaddr)
-	sendingUDPConn = udpconn
 	if err != nil {
 		defer udpconn.Close()
 		logger.Error.Println("Cannot create listening port")
-		return errors.New("networkError")
+		return nil, errors.New("networkError")
 	}
 	go listen(udpconn, callback)
-	return nil
+	return udpconn, nil
 }
 
 func listen(udpconn *net.UDPConn, callback func(int, []byte)) {
@@ -102,10 +102,11 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	// we are receiving a handshake response
 	// extract public key from packet
 	// first byte is reserved / DH flag
-	peerPublicKey := data[1:33]
+	peerPublicKey := data[1:PEMPubKeyLength + 1]
 	// read from map synchronously
 	openDHs.mutex.Lock()
 	addrString, err := getUDPAddrString(addr)
+	logger.Info.Println("Received public key from " + addrString + " (length " + strconv.Itoa(len(peerPublicKey)) + "): " + base64.StdEncoding.EncodeToString(peerPublicKey))
 	if err != nil {
 		return
 	}
@@ -158,18 +159,33 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	// translate addr and TPort into flow id
 	// call callback(flowID, data)
 	// consideration: maybe ratelimit at some point per IP? premature optimization is the root of all evil
+	addrStr, _ := getUDPAddrString(addr)
 	if data[0]&1 == 0 {
-		addrStr, _ := getUDPAddrString(addr)
 		logger.Info.Println("Got DH keyexchange from " + addrStr)
 		handleDHExchange(udpconn, addr, data)
 		return
 	}
 	// this is not a Diffie-Hellman, we need to decrypt and handle data
+	// there should already be a key here
+	keyMap.mutex.Lock()
+	key, exists := keyMap.data[addrStr]
+	keyMap.mutex.Unlock()
+	if !exists {
+		logger.Warning.Println("Could not find symmetric key for peer: " + addrStr)
+		return
+	}
+	plaintext, err := encryption.Decrypt(key, data[1:])
+	if err != nil {
+		logger.Error.Println("Could not decrypt data from peer: " + addrStr)
+		return
+	}
+	logger.Info.Println("Got message: " + string(plaintext[:12]))
+	return
 }
 
 // SendPacket sends a packet conforming to our onion hop layer protocol
 // Blocks until data is sent or an error is generated
-func SendPacket(addr string, data []byte) error {
+func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 	if len(data) > packetLength {
 		logger.Error.Println("Packet too long")
 		return errors.New("invalidArgumentError")
@@ -202,6 +218,7 @@ func SendPacket(addr string, data []byte) error {
 			logger.Error.Println("Could not pad packet")
 			return errors.New("internalError")
 		}
+		logger.Info.Println("Sending public key to " + addrString + " (length " + strconv.Itoa(len(publicKey)) + "): " + base64.StdEncoding.EncodeToString(publicKey))
 		sendingUDPConn.WriteToUDP(packet[:], receiverAddress)
 		// wait until DH is done
 		for {

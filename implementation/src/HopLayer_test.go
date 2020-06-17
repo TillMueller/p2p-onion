@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"testing"
+	"onion/logger"
 )
 
 func TestPadPacketLongThrownOut(t *testing.T) {
@@ -31,6 +32,8 @@ func callbackDummy(n int, data []byte) {}
 
 //unfinished
 func TestDiffieHellmanExchange(t *testing.T) {
-	SubscribeTo("localhost:65500", callbackDummy)
+	var udpconn1, _ = SubscribeTo("localhost:65500", callbackDummy)
 	SubscribeTo("localhost:65501", callbackDummy)
+	SendPacket(udpconn1, "localhost:65501", []byte("test message"))
+	SendPacket(udpconn1, "localhost:65501", []byte("and another one"))
 }

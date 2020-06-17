@@ -2,7 +2,7 @@ package dh
 
 import (
 	"errors"
-
+	"onion/logger"
 	"github.com/spacemonkeygo/openssl"
 )
 
@@ -23,20 +23,23 @@ func GenKeyPair() ([]byte, []byte, error) {
 }
 
 // DeriveSharedSecret creates a shared secret from a public and a private key pair
-func DeriveSharedSecret(publicKeyBytes []byte, privateKeyBytes []byte) ([]byte, error) {
+func DeriveSharedSecret(privateKeyBytes []byte, publicKeyBytes []byte) ([]byte, error) {
 	privateKey, err := openssl.LoadPrivateKeyFromPEM(privateKeyBytes)
 	if err != nil {
-		return nil, errors.New("Could not load private key")
+		logger.Error.Println("Could not load private key")
+		return nil, errors.New("internalError")
 	}
 
 	publicKey, err := openssl.LoadPublicKeyFromPEM(publicKeyBytes)
 	if err != nil {
-		return nil, errors.New("Could not load public key")
+		logger.Error.Println("Could not load public key")
+		return nil, errors.New("internalError")
 	}
 
 	sharedSecret, error := openssl.DeriveSharedSecret(privateKey, publicKey)
 	if error != nil {
-		return nil, errors.New("Could not derive shared secret")
+		logger.Error.Println("Could not derive shared secret")
+		return nil, errors.New("internalError")
 	}
 	return sharedSecret, nil
 }
