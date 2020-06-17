@@ -61,7 +61,7 @@ func padPacket(in []byte) ([packetLength]byte, error) {
 	bytesCopied := copy(out[:], in)
 	paddingBytes := make([]byte, packetLength-bytesCopied)
 	rand.Read(paddingBytes)
-	copy(out[:], paddingBytes)
+	copy(out[bytesCopied:], paddingBytes)
 	return out, nil
 }
 
@@ -115,7 +115,6 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		sharedSecret, err := dh.DeriveSharedSecret(value.privateKey, peerPublicKey)
 		if err != nil {
 			logger.Error.Println("Could not derive shared secret")
-			logger.Error.Println(err.Error())
 			return
 		}
 		openDHs.mutex.Lock()
@@ -131,13 +130,11 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	privateKey, publicKey, err := dh.GenKeyPair()
 	if err != nil {
 		logger.Error.Println("Could not generate keypair")
-		logger.Error.Println(err.Error())
 		return
 	}
 	sharedSecret, err := dh.DeriveSharedSecret(privateKey, peerPublicKey)
 	if err != nil {
 		logger.Error.Println("Could not derive shared secret")
-		logger.Error.Println(err.Error())
 		return
 	}
 	keyMap.mutex.Lock()
