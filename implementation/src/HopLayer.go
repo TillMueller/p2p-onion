@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"encoding/base64"
+	"encoding/binary"
 )
 
 const PEMPubKeyLength = 178
@@ -179,7 +180,8 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 		logger.Error.Println("Could not decrypt data from peer: " + addrStr)
 		return
 	}
-	logger.Info.Println("Got message: " + string(plaintext[:12]))
+	size := binary.BigEndian.Uint16(plaintext[:2])
+	logger.Info.Println("Got message (length " + strconv.Itoa(int(size)) + "): " + string(plaintext[2:size + 2]))
 	return
 }
 
@@ -233,25 +235,28 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 	}
 	// TODO sequence numbers
 	// encrypt
+	sizeBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(sizeBytes, uint16(len(data)))
+	data = append(sizeBytes, data...)
 	ciphertext, err := encryption.Encrypt(key, data)
 	if err != nil {
 		logger.Error.Println("Could not encrypt packet")
 		return errors.New("internalError")
 	}
 	// add flags
-	ciphertext = append([]byte{0x1}, ciphertext...)
+	unpaddedPacket := append([]byte{0x1}, ciphertext...)
 	// pad
-	paddedCiphertext, err := padPacket(ciphertext)
+	paddedPacket, err := padPacket(unpaddedPacket)
 	if err != nil {
 		logger.Error.Println("Could not pad packet")
 		return errors.New("internalError")
 	}
 	// sanity check
-	if len(paddedCiphertext) != packetLength {
+	if len(paddedPacket) != packetLength {
 		logger.Error.Println("Packet has wrong size")
 		return errors.New("invalidArgumentError")
 	}
 	// send
-	sendingUDPConn.WriteToUDP(paddedCiphertext[:], receiverAddress)
+	sendingUDPConn.WriteToUDP(paddedPacket[:], receiverAddress)
 	return nil
 }
