@@ -1,6 +1,6 @@
 package main
 
-import(
+import (
 	"testing"
 	"time"
 )
@@ -11,5 +11,5 @@ func TestDiffieHellmanExchange(t *testing.T) {
 	udpconn, _ := SubscribeTo("localhost:65501", callbackDummy)
 	time.Sleep(3 * time.Second)
 	SendPacket(udpconn, "localhost:65500", []byte("a response"))
-	SendPacket(udpconn, "localhost:65500", []byte("more reponses"))
+	SendPacket(udpconn, "localhost:65500", []byte("more responses"))
 }

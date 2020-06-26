@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"testing"
-	"onion/logger"
 )
 
 func TestPadPacketLongThrownOut(t *testing.T) {
