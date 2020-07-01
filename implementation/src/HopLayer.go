@@ -14,7 +14,7 @@ import (
 )
 
 const PEMPubKeyLength = 178
-const packetLength = 1280
+const packetLength = 1232 // == 1280 (v6 minimum MTU) - 40 (v6 header) - 8 (udp header)
 
 // setup data structures for flow IDs, symmetric keys and sequence numbers
 // flow looks like this: "ip:TPort" and maps to a flow ID which is used to
