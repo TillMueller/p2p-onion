@@ -94,11 +94,11 @@ func padPacket(in []byte) ([packetLength]byte, error) {
 	return out, nil
 }
 
-// SubscribeTo subscribes a callback function to a specific UDP address
+// setPacketReceiver subscribes a callback function to a specific UDP address
 // the callback function should handle onion L3 packets
 // listening address can just be a port (":1234") or also include an address
 // ("5.6.7.8:1234")
-func SubscribeTo(listeningAddress string, callback func(int, []byte)) (*net.UDPConn, error) {
+func setPacketReceiver(listeningAddress string, callback func(int, []byte)) (*net.UDPConn, error) {
 	logger.Info.Println("Opening new listening connection: " + listeningAddress)
 	udpaddr, err := net.ResolveUDPAddr("udp", listeningAddress)
 	if err != nil {
