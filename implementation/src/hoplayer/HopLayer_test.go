@@ -1,4 +1,4 @@
-package main
+package hoplayer
 
 import (
 	"bytes"
@@ -21,18 +21,22 @@ func TestPadPacketValidInput(t *testing.T) {
 	packet, err := padPacket(myslice)
 	if err != nil {
 		t.Errorf("padPacket errors on valid input")
+		return
 	}
-	if bytes.Compare(packet[0:length], myslice[0:length]) != 0 {
+	if !bytes.Equal(packet[0:length], myslice[0:length]) {
 		t.Errorf("padPacket does not retain original packet content")
 	}
 }
-
 func callbackDummy(n int, data []byte) {}
 
 //unfinished
 func TestDiffieHellmanExchange(t *testing.T) {
-	var udpconn1, _ = SubscribeTo("localhost:65500", callbackDummy)
-	SubscribeTo("localhost:65501", callbackDummy)
+	udpconn1, err := SetPacketReceiver("localhost:65500", callbackDummy)
+	if err != nil {
+		t.Errorf("Could not create listening address")
+		return
+	}
+	SetPacketReceiver("localhost:65501", callbackDummy)
 	SendPacket(udpconn1, "localhost:65501", []byte("test message"))
 	SendPacket(udpconn1, "localhost:65501", []byte("and another one"))
 }

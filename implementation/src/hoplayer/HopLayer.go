@@ -1,4 +1,4 @@
-package main
+package hoplayer
 
 import (
 	"crypto/rand"
@@ -15,8 +15,11 @@ import (
 
 const PEMPubKeyLength = 178
 const packetLength = 1232 // == 1280 (v6 minimum MTU) - 40 (v6 header) - 8 (udp header)
+const DH_MSGCODE = 0x0
+const DATA_MSGCODE = 0x1 // set if contained payload is data. If not set, payload is part of a Diffie-Hellman Handshake
+const RST_MSGCODE = 0x2
 
-// setup data structures for flow IDs, symmetric keys and sequence numbers
+// setup data structures for flow IDs, sym
 // flow looks like this: "ip:TPort" and maps to a flow ID which is used to
 // identify all data connected to that flow
 var flowMap = make(map[string]int)
@@ -62,7 +65,7 @@ func newKey(sharedSecret []byte, addrString string) {
 	sendingSeqNums.mutex.Lock()
 	sendingSeqNums.data[addrString] = 0
 	sendingSeqNums.mutex.Unlock()
-	// initiall set receiving sequence number
+	// initially set receiving sequence number
 	receivingSeqNums.mutex.Lock()
 	receivingSeqNums.data[addrString] = 0
 	receivingSeqNums.mutex.Unlock()
@@ -94,6 +97,28 @@ func padPacket(in []byte) ([packetLength]byte, error) {
 	return out, nil
 }
 
+func clearPeerInformation(addrStr string) {
+	keyMap.mutex.Lock()
+	_, exists := keyMap.data[addrStr]
+	if exists {
+		delete(keyMap.data, addrStr)
+	}
+	keyMap.mutex.Unlock()
+	sendingSeqNums.mutex.Lock()
+	_, exists = sendingSeqNums.data[addrStr]
+	if exists {
+		delete(sendingSeqNums.data, addrStr)
+	}
+	sendingSeqNums.mutex.Unlock()
+	receivingSeqNums.mutex.Lock()
+	_, exists = receivingSeqNums.data[addrStr]
+	if exists {
+		delete(receivingSeqNums.data, addrStr)
+	}
+	receivingSeqNums.mutex.Unlock()
+	logger.Info.Println("Removed all local information for peer: " + addrStr)
+}
+
 // SetPacketReceiver subscribes a callback function to a specific UDP address
 // the callback function should handle onion L3 packets
 // listening address can just be a port (":1234") or also include an address
@@ -107,7 +132,7 @@ func SetPacketReceiver(listeningAddress string, callback func(int, []byte)) (*ne
 	}
 	udpconn, err := net.ListenUDP("udp", udpaddr)
 	if err != nil {
-		defer udpconn.Close()
+		// defer udpconn.Close()
 		logger.Error.Println("Cannot create listening port")
 		return nil, errors.New("networkError")
 	}
@@ -165,7 +190,7 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		return
 	}
 	newKey(sharedSecret, addrString)
-	packet, err := padPacket(append([]byte{0}, publicKey...))
+	packet, err := padPacket(append([]byte{DH_MSGCODE}, publicKey...))
 	if err != nil {
 		logger.Error.Println("Could not pad packet")
 		logger.Error.Println(err.Error())
@@ -183,7 +208,14 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	// call callback(flowID, data)
 	// consideration: maybe ratelimit at some point per IP? premature optimization is the root of all evil
 	addrStr, _ := getUDPAddrString(addr)
-	if data[0]&1 == 0 {
+
+	//upon receiving a RST_MSGCODE, delete all local state of hoplayer connection.
+	if data[0] == RST_MSGCODE {
+		logger.Info.Println("Got reset message from peer: " + addrStr)
+		clearPeerInformation(addrStr)
+		return
+	}
+	if data[0] == DH_MSGCODE {
 		logger.Info.Println("Got DH keyexchange from " + addrStr)
 		handleDHExchange(udpconn, addr, data)
 		return
@@ -194,8 +226,15 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	key, exists := keyMap.data[addrStr]
 	keyMap.mutex.Unlock()
 	if !exists {
-		// if this happens we might need to notify the peer
 		logger.Warning.Println("Could not find symmetric key for peer: " + addrStr)
+		// send reset message to peer
+		packet, err := padPacket([]byte{RST_MSGCODE})
+		if err != nil {
+			logger.Error.Println("Could not pad reset packet for peer: " + addrStr)
+			return
+		}
+		udpconn.WriteToUDP(packet[:], addr)
+		logger.Warning.Println("Sent hoplayer reset message to peer: " + addrStr)
 		return
 	}
 	plaintext, err := encryption.Decrypt(key, data[1:])
@@ -279,7 +318,6 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 		}
 		keyMap.cond.L.Unlock()
 	}
-	// TODO sequence numbers
 	// encrypt
 	sizeBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(sizeBytes, uint16(len(data)))
