@@ -145,7 +145,15 @@ func listen(udpconn *net.UDPConn, callback func(int, []byte)) {
 		buf := make([]byte, packetLength)
 		curLength, addr, err := udpconn.ReadFromUDP(buf)
 		if err != nil || curLength != packetLength {
-			logger.Warning.Println("Skipping incoming packet")
+			// TODO maybe move this error handling to a goroutine
+			addrString, err := getUDPAddrString(addr)
+			if err != nil {
+				logger.Warning.Println("Could not generate address string from UDP address")
+				continue
+			}
+			logger.Warning.Println("Got packet with wrong size from peer: " + addrString)
+			// TODO also clear this peer's information on the onion layer
+			clearPeerInformation(addrString)
 			continue
 		}
 		go handleIncomingPacket(udpconn, addr, buf, callback)
@@ -159,10 +167,11 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	peerPublicKey := data[1 : PEMPubKeyLength+1]
 	// read from map synchronously
 	addrString, err := getUDPAddrString(addr)
-	logger.Info.Println("Received public key from " + addrString + " (length " + strconv.Itoa(len(peerPublicKey)) + ")")
 	if err != nil {
+		logger.Warning.Println("Could not generate address string from UDP address")
 		return
 	}
+	logger.Info.Println("Received public key from " + addrString + " (length " + strconv.Itoa(len(peerPublicKey)) + ")")
 	openDHs.mutex.Lock()
 	value, exists := openDHs.data[addrString]
 	openDHs.mutex.Unlock()
