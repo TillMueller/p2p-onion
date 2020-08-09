@@ -14,4 +14,4 @@ func buildTunnel(finalHopAddress string) {
 	// - make API send message that tunnel creation was successful
 }
 
-func destroyTunnel()
+// func destroyTunnel()

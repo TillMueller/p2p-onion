@@ -1,11 +1,12 @@
 package config
 
 import (
-	"bufio"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"io/ioutil"
 	"onion/logger"
-	"os"
 	"strconv"
 
 	"github.com/go-ini/ini"
@@ -23,10 +24,30 @@ var (
 	P2p_hostname      string
 	Intermediate_hops int
 	Hostkey           []byte
-	PrivateKey        []byte
-	PublicKey         []byte
+	PrivateKey        *rsa.PrivateKey
 	RpsAddress        string
 )
+
+func loadPrivateKeyFile(hostkey_location string) error {
+	// Alternative implementation of loading the key from file
+	keyFileContent, err := ioutil.ReadFile(hostkey_location)
+	if err != nil {
+		logger.Error.Println("Could not read hostkey from pem file, is the path correct?")
+		return errors.New("InputOutputError")
+	}
+	privateKeyPem, _ := pem.Decode(keyFileContent)
+	if privateKeyPem.Type != "RSA PRIVATE KEY" {
+		logger.Error.Println("Host key is in wrong format")
+		return errors.New("CryptoError")
+	}
+	PrivateKey, err = x509.ParsePKCS1PrivateKey(privateKeyPem.Bytes)
+	if err != nil {
+		logger.Error.Println("Could not parse private host key")
+		return errors.New("CryptoError")
+	}
+	logger.Info.Println("Loaded private key")
+	return nil
+}
 
 func loadConfig(path string) error {
 	// TODO maybe we need to check where the path is relative to
@@ -44,34 +65,11 @@ func loadConfig(path string) error {
 		return errors.New("ConfigurationError")
 	}
 	hostkey_location := config.Section("onion").Key("hostkey").MustString(default_hostkey_location)
-	fi, err := os.Stat(hostkey_location)
-	if err != nil {
-		logger.Error.Println("Could not probe length of either given hostkey file or hostkey file in default location")
+	if loadPrivateKeyFile(hostkey_location) != nil {
+		logger.Error.Println("Private key file load failed: " + hostkey_location)
 		return errors.New("ConfigurationError")
 	}
 
-	// Adapted from https://medium.com/@Raulgzm/export-import-pem-files-in-go-67614624adc7
-	// TODO test this
-	file, err := os.Open(hostkey_location)
-	if err != nil {
-		logger.Error.Println("Neither hostkey specified in config nor hostkey in default location found")
-		return errors.New("ConfigurationError")
-	}
-	hostkeyBuf := make([]byte, fi.Size())
-	tempBuf := bufio.NewReader(file)
-
-	readSize, err := tempBuf.Read(hostkeyBuf)
-	if err != nil || int64(readSize) != fi.Size() {
-		logger.Error.Println("Error while reading hostkey file")
-		return errors.New("InputOutputError")
-	}
-	PrivateKey, _ := pem.Decode([]byte(hostkeyBuf))
-	if PrivateKey == nil {
-		logger.Error.Println("Could not decode hostkey from PEM file")
-		return errors.New("InputOutputError")
-	}
-	//todo fix issue here
-	PublicKey = &PrivateKey.PublicKey
 	if !config.Section("rps").HasKey("api_address") {
 		logger.Error.Println("RPS API address could not be found in config")
 		return errors.New("ConfigurationError")
