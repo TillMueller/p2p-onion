@@ -28,9 +28,9 @@ var (
 	RpsAddress        string
 )
 
-func loadPrivateKeyFile(hostkey_location string) error {
+func loadPrivateKeyFile(hostkeyLocation string) error {
 	// Alternative implementation of loading the key from file
-	keyFileContent, err := ioutil.ReadFile(hostkey_location)
+	keyFileContent, err := ioutil.ReadFile(hostkeyLocation)
 	if err != nil {
 		logger.Error.Println("Could not read hostkey from pem file, is the path correct?")
 		return errors.New("InputOutputError")
