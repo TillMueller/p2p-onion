@@ -54,8 +54,8 @@ func receiveAPIMessage(conn net.Conn) (err error, rspType uint16, rspMsgBuf []by
 	rspType = binary.BigEndian.Uint16(lengthTypeBuf[LENGTH_OF_SIZE:LENGTH_OF_HEADER])
 	rspBuf := make([]byte, rspLength - LENGTH_OF_HEADER)
 	n, err = io.ReadFull(conn, rspBuf)
-	if err != nil || n != int(rspLength) {
-		logger.Error.Println("Error reading incoming API message of size " + strconv.Itoa(int(rspLength)))
+	if err != nil || n != int(rspLength - LENGTH_OF_HEADER) {
+		logger.Error.Println("Error reading incoming API message of size " + strconv.Itoa(int(rspLength)) + " (read size: " + strconv.Itoa(n) + ")")
 		return errors.New("networkError"),0,nil
 	}
 	return nil, rspType, rspBuf

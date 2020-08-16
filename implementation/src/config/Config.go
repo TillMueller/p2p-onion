@@ -29,7 +29,6 @@ var (
 )
 
 func loadPrivateKeyFile(hostkeyLocation string) error {
-	// Alternative implementation of loading the key from file
 	keyFileContent, err := ioutil.ReadFile(hostkeyLocation)
 	if err != nil {
 		logger.Error.Println("Could not read hostkey from pem file, is the path correct?")
@@ -64,12 +63,11 @@ func loadConfig(path string) error {
 		logger.Error.Println("Config defines insecure value for minimum intermediate hops, has to be at least " + strconv.Itoa(minimum_intermediate_hops))
 		return errors.New("ConfigurationError")
 	}
-	hostkey_location := config.Section("onion").Key("hostkey").MustString(default_hostkey_location)
-	if loadPrivateKeyFile(hostkey_location) != nil {
-		logger.Error.Println("Private key file load failed: " + hostkey_location)
+	hostkeyLocation := config.Section("onion").Key("hostkey").MustString(default_hostkey_location)
+	if loadPrivateKeyFile(hostkeyLocation) != nil {
+		logger.Error.Println("Private key file load failed: " + hostkeyLocation)
 		return errors.New("ConfigurationError")
 	}
-
 	if !config.Section("rps").HasKey("api_address") {
 		logger.Error.Println("RPS API address could not be found in config")
 		return errors.New("ConfigurationError")
