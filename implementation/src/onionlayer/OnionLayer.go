@@ -49,11 +49,11 @@ func sendMessage(peerAddress net.IP, peerOnionPort uint16, TPort uint32, msgType
 // returns the ID of the tunnel that was built as a uint32. If it was not successful, the ID is 0 and error is set.
 // BuildTunnel exits on error, so if the creation was unsuccessful it may be tried again by calling BuildTunnel again.
 // Onion messages have this format:
-// 0		8		16		24		32
-// [---------------TPort-------------]
-// [-----------SequenceNumber--------]
-// [msgType||-------------data-------]
-// [------------contd. data----------]
+// 0        8        16        24        32
+// [---------------TPort------------------]
+// [------------SequenceNumber------------]
+// [msgType||----------------data---------]
+// [--------------contd. data-------------]
 // message Types:
 //		- 0x00 KEYXCHG		Indicates that the message data contains a Diffie-Hellman nonce encrypted with the receiving hosts public key. Response of type KEYXCHGRESP expected.
 //		- 0x01 KEYXCHGRESP	Indicates that the message data contains a Diffie-Hellman nonce encrypted with the receiving hosts public key. May only be sent in response to KEYXCHG.
