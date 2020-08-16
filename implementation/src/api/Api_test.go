@@ -41,6 +41,7 @@ func listenAndRespond(expectedMessage []byte, response []byte, port int, t *test
 	}
 }
 
+// TODO create more complicated tests / tests with invalid responses
 func TestRPSQueryValidSimple(t *testing.T) {
 	config.RpsAddress = "127.0.0.1:65510"
 	expectedMessage := []byte {

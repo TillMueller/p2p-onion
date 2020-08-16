@@ -28,6 +28,8 @@ var (
 	RpsAddress        string
 )
 
+// TODO add logfile location to config
+
 func loadPrivateKeyFile(hostkeyLocation string) error {
 	keyFileContent, err := ioutil.ReadFile(hostkeyLocation)
 	if err != nil {

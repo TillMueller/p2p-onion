@@ -145,15 +145,14 @@ func listen(udpconn *net.UDPConn, callback func(int, []byte)) {
 		buf := make([]byte, packetLength)
 		curLength, addr, err := udpconn.ReadFromUDP(buf)
 		if err != nil || curLength != packetLength {
-			// TODO maybe move this error handling to a goroutine
 			addrString, err := getUDPAddrString(addr)
 			if err != nil {
 				logger.Warning.Println("Could not generate address string from UDP address")
 				continue
 			}
 			logger.Warning.Println("Got packet with wrong size from peer: " + addrString)
-			// TODO also clear this peer's information on the onion layer
-			clearPeerInformation(addrString)
+			// TODO also clear this peer's information on the onion layer (non-blocking)
+			go clearPeerInformation(addrString)
 			continue
 		}
 		go handleIncomingPacket(udpconn, addr, buf, callback)
