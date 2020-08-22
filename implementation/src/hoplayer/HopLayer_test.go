@@ -3,6 +3,7 @@ package hoplayer
 import (
 	"bytes"
 	"crypto/rand"
+	"net"
 	"testing"
 	"time"
 )
@@ -28,7 +29,7 @@ func TestPadPacketValidInput(t *testing.T) {
 		t.Errorf("padPacket does not retain original packet content")
 	}
 }
-func callbackDummy(data []byte) {}
+func callbackDummy(addr *net.UDPAddr, data []byte) {}
 
 //unfinished
 func TestDiffieHellmanExchange(t *testing.T) {

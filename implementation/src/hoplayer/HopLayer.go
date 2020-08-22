@@ -82,7 +82,7 @@ func clearPeerInformation(addrStr string) {
 // the callback function should handle onion L3 packets
 // listening address can just be a port (":1234") or also include an address
 // ("5.6.7.8:1234")
-func SetPacketReceiver(listeningAddress string, callback func([]byte)) (*net.UDPConn, error) {
+func SetPacketReceiver(listeningAddress string, callback func(*net.UDPAddr, []byte)) (*net.UDPConn, error) {
 	logger.Info.Println("Opening new listening connection: " + listeningAddress)
 	udpaddr, err := net.ResolveUDPAddr("udp", listeningAddress)
 	if err != nil {
@@ -99,7 +99,7 @@ func SetPacketReceiver(listeningAddress string, callback func([]byte)) (*net.UDP
 	return udpconn, nil
 }
 
-func listen(udpconn *net.UDPConn, callback func([]byte)) {
+func listen(udpconn *net.UDPConn, callback func(*net.UDPAddr, []byte)) {
 	for {
 		buf := make([]byte, packetLength)
 		curLength, addr, err := udpconn.ReadFromUDP(buf)
@@ -165,7 +165,7 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	}
 }
 
-func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, callback func([]byte)) {
+func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, callback func(*net.UDPAddr, []byte)) {
 	// [0x01|0x00]((packetLength - 1)*[0xYY]) starting flag indicates whether packet is DH param (=0x0) or regular data message (0x1)
 	// check if this is a Diffie-Hellman handshake
 	// if it is: respond and save the key in the keystore in case we do not have a key with this address already
@@ -226,7 +226,7 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	}
 	storage.SetSequenceNumbersValue(receivingSeqNums, addrStr, receivedSeqNum + 1)
 	logger.Info.Println("Got message (length " + strconv.Itoa(int(size)) + "): " + string(plaintext[6:size+6]))
-	callback(plaintext[6:size+6])
+	callback(addr, plaintext[6:size+6])
 	return
 }
 

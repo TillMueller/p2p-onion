@@ -1,11 +1,9 @@
 package config
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha1"
 	"fmt"
 	"io/ioutil"
+	"onion/encryption"
 	"testing"
 )
 
@@ -29,14 +27,14 @@ func TestLoadAndUsePrivateKey(t *testing.T) {
 		t.Errorf("Loading encrypted message failed")
 		return
 	}
-	out, err := rsa.DecryptOAEP(sha1.New(), rand.Reader, PrivateKey, bytes, nil)
+	out, err := encryption.DecryptAsymmetric(PrivateKey, bytes)
 	if err != nil {
 		t.Errorf("Decrypting message failed")
 		return
 	}
 	fmt.Println(string(out))
 	// Test encryption with public key; check by running "openssl rsautl -decrypt -in message2.encrypted -oaep -out plaintext.txt -inkey hostkey_testingonly.pem"
-	encrypted, _ := rsa.EncryptOAEP(sha1.New(), rand.Reader, &PrivateKey.PublicKey, []byte("An encrypted response"), nil)
+	encrypted, _ := encryption.EncryptAsymmetric(&PrivateKey.PublicKey, []byte("An encrypted response"))
 	err = ioutil.WriteFile("message2.encrypted", encrypted, 0644)
 	if err != nil {
 		t.Errorf("Could not write decryption test")

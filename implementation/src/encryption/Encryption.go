@@ -4,6 +4,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
 	"errors"
 	"onion/logger"
 )
@@ -44,4 +46,22 @@ func Decrypt(key []byte, ciphertext []byte) ([]byte, error) {
 	stream := cipher.NewCFBDecrypter(block, iv)
 	stream.XORKeyStream(ciphertext, ciphertext)
 	return ciphertext, nil
+}
+
+func EncryptAsymmetric(publicKey *rsa.PublicKey, text []byte) ([]byte, error) {
+	ciphertext, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, publicKey, text, nil)
+	if err != nil {
+		logger.Error.Println("Could not encrypt text with public key")
+		return nil, errors.New("CryptoError")
+	}
+	return ciphertext, nil
+}
+
+func DecryptAsymmetric(privateKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
+	plaintext, err := rsa.DecryptOAEP(sha1.New(), rand.Reader, privateKey, ciphertext, nil)
+	if err != nil {
+		logger.Error.Println("Could not decrypt text with private key")
+		return nil, errors.New("CryptoError")
+	}
+	return plaintext, nil
 }

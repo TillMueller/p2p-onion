@@ -1,11 +1,11 @@
 package logger
 
 import (
-	"log"
-	"os"
 	"crypto/rand"
-	"strconv"
+	"log"
 	"math/big"
+	"os"
+	"strconv"
 )
 
 var (
@@ -40,7 +40,7 @@ func getRandomNumber(max int) int {
 	return int(nBig.Int64())
 }
 
-func InitializeLogger(name string) { 
+func InitializeLogger(name string) {
 	Info = log.New(logFile, "[" + name + "] INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 	Warning = log.New(logFile, "[" + name +  "] WARNING: ", log.Ldate|log.Ltime|log.Lshortfile)
 	Error = log.New(logFile, "[" + name +  "] ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
