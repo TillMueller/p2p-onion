@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func callbackDummyPeer1(n int, data []byte) {}
+func callbackDummyPeer1(data []byte) {}
 
 func TestDiffieHellmanExchangePeer1(t *testing.T) {
 	udpconn, err := SetPacketReceiver("localhost:65502", callbackDummyPeer1)
@@ -28,7 +28,7 @@ func TestResetPeer1(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	SendPacket(udpconn, "localhost:65505", []byte("test message"))
 	time.Sleep(3 * time.Second)
-	SendPacket(udpconn, "localhost:65505", []byte("and another one"))
+	SendPacket(udpconn, "localhost:65505", []byte("this message gets lost"))
 	time.Sleep(3 * time.Second)
 	SendPacket(udpconn, "localhost:65505", []byte("last message"))
 }

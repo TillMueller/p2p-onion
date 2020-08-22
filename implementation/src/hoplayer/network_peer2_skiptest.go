@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func callbackDummyPeer2(n int, data []byte) {}
+func callbackDummyPeer2(data []byte) {}
 
 func TestDiffieHellmanExchangePeer2(t *testing.T) {
 	udpconn, err := SetPacketReceiver("localhost:65503", callbackDummyPeer2)

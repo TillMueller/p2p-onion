@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"testing"
+	"time"
 )
 
 func TestPadPacketLongThrownOut(t *testing.T) {
@@ -27,7 +28,7 @@ func TestPadPacketValidInput(t *testing.T) {
 		t.Errorf("padPacket does not retain original packet content")
 	}
 }
-func callbackDummy(n int, data []byte) {}
+func callbackDummy(data []byte) {}
 
 //unfinished
 func TestDiffieHellmanExchange(t *testing.T) {
@@ -39,4 +40,5 @@ func TestDiffieHellmanExchange(t *testing.T) {
 	SetPacketReceiver("localhost:65501", callbackDummy)
 	SendPacket(udpconn1, "localhost:65501", []byte("test message"))
 	SendPacket(udpconn1, "localhost:65501", []byte("and another one"))
+	time.Sleep(time.Second)
 }

@@ -8,9 +8,9 @@ import (
 	"onion/dh"
 	"onion/encryption"
 	"onion/logger"
+	"onion/storage"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 const PEMPubKeyLength = 178
@@ -24,55 +24,25 @@ const RST_MSGCODE = 0x2
 // identify all data connected to that flow
 var flowMap = make(map[string]int)
 
-type sequenceNumbers struct {
-	data  map[string]int
-	mutex sync.Mutex
-}
-
-var sendingSeqNums = sequenceNumbers{data: make(map[string]int)}
-
+// contains the next used sequence number
+var sendingSeqNums = storage.InitSequenceNumbers()
 // contains the next expected sequence number
-var receivingSeqNums = sequenceNumbers{data: make(map[string]int)}
+var receivingSeqNums = storage.InitSequenceNumbers()
 
-type symmetricKeys struct {
-	data  map[string][]byte
-	mutex sync.Mutex
-	cond  *sync.Cond
-}
-
-var keyMap = symmetricKeys{data: make(map[string][]byte), mutex: sync.Mutex{}, cond: sync.NewCond(&sync.Mutex{})}
-var waitForDHChannel = make(chan bool, 1)
-
-type keyPair struct {
-	privateKey []byte
-	publicKey  []byte
-}
-
+// stores derived symmetric keys
+var keyMap = storage.InitSymmetricKeys()
 // stores uncompleted DH Handshake
-type openDHHandshakes struct {
-	data  map[string]keyPair
-	mutex sync.Mutex
-}
-
-var openDHs = openDHHandshakes{data: make(map[string]keyPair)}
+var openDHs = storage.InitKeyPairs()
 
 // When we have a new shared secret, initialize all data structures we need for peer-to-peer communication
 func newKey(sharedSecret []byte, addrString string) {
-	keyMap.mutex.Lock()
-	keyMap.data[addrString] = sharedSecret
-	keyMap.mutex.Unlock()
+	storage.SetSymmetricKeysValue(keyMap, addrString, sharedSecret)
 	// initially set sending sequence number
-	sendingSeqNums.mutex.Lock()
-	sendingSeqNums.data[addrString] = 0
-	sendingSeqNums.mutex.Unlock()
+	storage.SetSequenceNumbersValue(sendingSeqNums, addrString, 0)
 	// initially set receiving sequence number
-	receivingSeqNums.mutex.Lock()
-	receivingSeqNums.data[addrString] = 0
-	receivingSeqNums.mutex.Unlock()
+	storage.SetSequenceNumbersValue(receivingSeqNums, addrString, 0)
 	// notify waiting goroutines of new value
-	keyMap.cond.L.Lock()
-	keyMap.cond.Broadcast()
-	keyMap.cond.L.Unlock()
+	storage.BroadcastSymmetricKeys(keyMap)
 }
 
 func getUDPAddrString(addr *net.UDPAddr) (string, error) {
@@ -92,30 +62,19 @@ func padPacket(in []byte) ([packetLength]byte, error) {
 	out := [packetLength]byte{}
 	bytesCopied := copy(out[:], in)
 	paddingBytes := make([]byte, packetLength-bytesCopied)
-	rand.Read(paddingBytes)
+	_, err := rand.Read(paddingBytes)
+	if err != nil {
+		logger.Error.Println("Could not read bytes for packet padding")
+		return [packetLength]byte{}, errors.New("CryptoError")
+	}
 	copy(out[bytesCopied:], paddingBytes)
 	return out, nil
 }
 
 func clearPeerInformation(addrStr string) {
-	keyMap.mutex.Lock()
-	_, exists := keyMap.data[addrStr]
-	if exists {
-		delete(keyMap.data, addrStr)
-	}
-	keyMap.mutex.Unlock()
-	sendingSeqNums.mutex.Lock()
-	_, exists = sendingSeqNums.data[addrStr]
-	if exists {
-		delete(sendingSeqNums.data, addrStr)
-	}
-	sendingSeqNums.mutex.Unlock()
-	receivingSeqNums.mutex.Lock()
-	_, exists = receivingSeqNums.data[addrStr]
-	if exists {
-		delete(receivingSeqNums.data, addrStr)
-	}
-	receivingSeqNums.mutex.Unlock()
+	storage.DeleteSymmetricKeysValue(keyMap, addrStr)
+	storage.DeleteSequenceNumbersValue(sendingSeqNums, addrStr)
+	storage.DeleteSequenceNumbersValue(receivingSeqNums, addrStr)
 	logger.Info.Println("Removed all local information for peer: " + addrStr)
 }
 
@@ -123,7 +82,7 @@ func clearPeerInformation(addrStr string) {
 // the callback function should handle onion L3 packets
 // listening address can just be a port (":1234") or also include an address
 // ("5.6.7.8:1234")
-func SetPacketReceiver(listeningAddress string, callback func(int, []byte)) (*net.UDPConn, error) {
+func SetPacketReceiver(listeningAddress string, callback func([]byte)) (*net.UDPConn, error) {
 	logger.Info.Println("Opening new listening connection: " + listeningAddress)
 	udpaddr, err := net.ResolveUDPAddr("udp", listeningAddress)
 	if err != nil {
@@ -140,7 +99,7 @@ func SetPacketReceiver(listeningAddress string, callback func(int, []byte)) (*ne
 	return udpconn, nil
 }
 
-func listen(udpconn *net.UDPConn, callback func(int, []byte)) {
+func listen(udpconn *net.UDPConn, callback func([]byte)) {
 	for {
 		buf := make([]byte, packetLength)
 		curLength, addr, err := udpconn.ReadFromUDP(buf)
@@ -171,18 +130,14 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		return
 	}
 	logger.Info.Println("Received public key from " + addrString + " (length " + strconv.Itoa(len(peerPublicKey)) + ")")
-	openDHs.mutex.Lock()
-	value, exists := openDHs.data[addrString]
-	openDHs.mutex.Unlock()
+	value, exists := storage.GetKeyPairsValue(openDHs, addrString)
 	if exists {
-		sharedSecret, err := dh.DeriveSharedSecret(value.privateKey, peerPublicKey)
+		sharedSecret, err := dh.DeriveSharedSecret(value.PrivateKey, peerPublicKey)
 		if err != nil {
 			logger.Error.Println("Could not derive shared secret")
 			return
 		}
-		openDHs.mutex.Lock()
-		delete(openDHs.data, addrString)
-		openDHs.mutex.Unlock()
+		storage.DeleteKeyPairsValue(openDHs, addrString)
 		newKey(sharedSecret, addrString)
 		return
 	}
@@ -201,20 +156,23 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	packet, err := padPacket(append([]byte{DH_MSGCODE}, publicKey...))
 	if err != nil {
 		logger.Error.Println("Could not pad packet")
-		logger.Error.Println(err.Error())
 		return
 	}
-	udpconn.WriteToUDP(packet[:], addr)
+	_, err = udpconn.WriteToUDP(packet[:], addr)
+	if err != nil {
+		logger.Error.Println("Could not send DH response to peer " + addrString)
+		return
+	}
 }
 
-func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, callback func(int, []byte)) {
+func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, callback func([]byte)) {
 	// [0x01|0x00]((packetLength - 1)*[0xYY]) starting flag indicates whether packet is DH param (=0x0) or regular data message (0x1)
 	// check if this is a Diffie-Hellman handshake
 	// if it is: respond and save the key in the keystore in case we do not have a key with this address already
 	// otherwise: decrypt packet
 	// translate addr and TPort into flow id
 	// call callback(flowID, data)
-	// consideration: maybe ratelimit at some point per IP? premature optimization is the root of all evil
+	// consideration: maybe ratelimit at some point per IP?
 	addrStr, _ := getUDPAddrString(addr)
 
 	//upon receiving a RST_MSGCODE, delete all local state of hoplayer connection.
@@ -230,9 +188,7 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	}
 	// this is not a Diffie-Hellman, we need to decrypt and handle data
 	// there should already be a key here
-	keyMap.mutex.Lock()
-	key, exists := keyMap.data[addrStr]
-	keyMap.mutex.Unlock()
+	key, exists := storage.GetSymmetricKeysValue(keyMap, addrStr)
 	if !exists {
 		logger.Warning.Println("Could not find symmetric key for peer: " + addrStr)
 		// send reset message to peer
@@ -241,7 +197,11 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 			logger.Error.Println("Could not pad reset packet for peer: " + addrStr)
 			return
 		}
-		udpconn.WriteToUDP(packet[:], addr)
+		_, err = udpconn.WriteToUDP(packet[:], addr)
+		if err != nil {
+			logger.Error.Println("Could not send reset message to peer: " + addrStr)
+			return
+		}
 		logger.Warning.Println("Sent hoplayer reset message to peer: " + addrStr)
 		return
 	}
@@ -252,9 +212,7 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	}
 	size := binary.BigEndian.Uint16(plaintext[:2])
 	receivedSeqNum := int(binary.BigEndian.Uint32(plaintext[2:6]))
-	receivingSeqNums.mutex.Lock()
-	curSeqNum, exists := receivingSeqNums.data[addrStr]
-	receivingSeqNums.mutex.Unlock()
+	curSeqNum, exists := storage.GetSequenceNumbersValue(receivingSeqNums, addrStr)
 	if !exists {
 		logger.Error.Println("Could not find sequence number for peer: " + addrStr)
 		return
@@ -266,10 +224,9 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	if receivedSeqNum != curSeqNum {
 		logger.Info.Println("Some sequence numbers were missed, possibly due to lost packets. Expected sequence number: " + strconv.Itoa(curSeqNum) + "; received sequence number: " + strconv.Itoa(receivedSeqNum))
 	}
-	receivingSeqNums.mutex.Lock()
-	receivingSeqNums.data[addrStr] = receivedSeqNum + 1
-	receivingSeqNums.mutex.Unlock()
+	storage.SetSequenceNumbersValue(receivingSeqNums, addrStr, receivedSeqNum + 1)
 	logger.Info.Println("Got message (length " + strconv.Itoa(int(size)) + "): " + string(plaintext[6:size+6]))
+	callback(plaintext[6:size+6])
 	return
 }
 
@@ -282,15 +239,15 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 	}
 	receiverAddress, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		return err
+		logger.Error.Println("Could not resolve address " + addr)
+		return errors.New("networkError")
 	}
 	addrString, err := getUDPAddrString(receiverAddress)
 	if err != nil {
-		return err
+		logger.Error.Println("Could not create address string from receiver address " + receiverAddress.String())
+		return errors.New("networkError")
 	}
-	keyMap.mutex.Lock()
-	key, exists := keyMap.data[addrString]
-	keyMap.mutex.Unlock()
+	key, exists := storage.GetSymmetricKeysValue(keyMap, addrString)
 	if !exists {
 		// We haven't established a shared secret, so we must perform DH
 		logger.Info.Println("Did not find existing key for " + addr + ". Attempting to create one via DH.")
@@ -299,10 +256,7 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 			logger.Error.Println("Could not generate keypair")
 			return errors.New("internalError")
 		}
-		keyPair := keyPair{privateKey, publicKey}
-		openDHs.mutex.Lock()
-		openDHs.data[addrString] = keyPair
-		openDHs.mutex.Unlock()
+		storage.SetKeyPairsValue(openDHs, addrString, storage.KeyPair{PrivateKey: privateKey, PublicKey: publicKey})
 
 		packet, err := padPacket(append([]byte{0}, publicKey...))
 		if err != nil {
@@ -310,32 +264,20 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 			return errors.New("internalError")
 		}
 		logger.Info.Println("Sending public key to " + addrString + " (length " + strconv.Itoa(len(publicKey)) + ")")
-		sendingUDPConn.WriteToUDP(packet[:], receiverAddress)
-		// wait until DH is done
-		keyMap.cond.L.Lock()
-		for {
-			// this _should not_ be a deadlock
-			keyMap.mutex.Lock()
-			key, exists = keyMap.data[addrString]
-			keyMap.mutex.Unlock()
-			if exists {
-				break
-			}
-			logger.Info.Println("Waiting for DH with peer: " + addrString)
-			keyMap.cond.Wait()
+		_, err = sendingUDPConn.WriteToUDP(packet[:], receiverAddress)
+		if err != nil {
+			logger.Error.Println("Could not send public key to " + addrString)
+			return errors.New("networkError")
 		}
-		keyMap.cond.L.Unlock()
+		// wait until DH is done
+		logger.Info.Println("Waiting for DH with peer: " + addrString)
+		key = storage.WaitForSymmetricKeysValue(keyMap, addrString)
 	}
 	// encrypt
 	sizeBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(sizeBytes, uint16(len(data)))
 	seqBytes := make([]byte, 4)
-	sendingSeqNums.mutex.Lock()
-	seqNum, exists := sendingSeqNums.data[addrString]
-	if exists {
-		sendingSeqNums.data[addrString]++
-	}
-	sendingSeqNums.mutex.Unlock()
+	seqNum, exists := storage.GetAndIncrementSequenceNumbersValue(sendingSeqNums, addrString)
 	if !exists {
 		logger.Error.Println("Didn't find sequence number for given address: " + addrString)
 		return errors.New("internalError")
@@ -356,12 +298,11 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 		logger.Error.Println("Could not pad packet")
 		return errors.New("internalError")
 	}
-	// sanity check
-	if len(paddedPacket) != packetLength {
-		logger.Error.Println("Packet has wrong size")
-		return errors.New("invalidArgumentError")
-	}
 	// send
-	sendingUDPConn.WriteToUDP(paddedPacket[:], receiverAddress)
+	_, err = sendingUDPConn.WriteToUDP(paddedPacket[:], receiverAddress)
+	if err != nil {
+		logger.Error.Println("Could not send packet to peer " + addrString)
+		return errors.New("networkError")
+	}
 	return nil
 }
