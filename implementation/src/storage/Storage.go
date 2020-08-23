@@ -3,11 +3,12 @@ package storage
 import (
 	"container/list"
 	"crypto/rsa"
+	"errors"
 	"sync"
 	"time"
 )
 
-type SymmetricKeys struct {
+type symmetricKeys struct {
 	data  map[string][]byte
 	mutex sync.Mutex
 	cond  *sync.Cond
@@ -15,27 +16,27 @@ type SymmetricKeys struct {
 
 // InitSymmetricKeysMap creates a new map for storage of symmetric keys, used for storing the keypair generated for a
 // Diffie-Hellman exchange. It also contains functionality to broadcast signals for routines waiting for new map values
-func InitSymmetricKeys() *SymmetricKeys {
-	return &SymmetricKeys{
+func InitSymmetricKeys() *symmetricKeys {
+	return &symmetricKeys{
 		data:  make(map[string][]byte),
 		mutex: sync.Mutex{},
 		cond:  sync.NewCond(&sync.Mutex{}),
 	}
 }
 
-func SetSymmetricKeysValue(symmetricKeysMap *SymmetricKeys, key string, value []byte) {
+func SetSymmetricKeysValue(symmetricKeysMap *symmetricKeys, key string, value []byte) {
 	symmetricKeysMap.mutex.Lock()
 	symmetricKeysMap.data[key] = value
 	symmetricKeysMap.mutex.Unlock()
 }
 
-func BroadcastSymmetricKeys(symmetricKeysMap *SymmetricKeys) {
+func BroadcastSymmetricKeys(symmetricKeysMap *symmetricKeys) {
 	symmetricKeysMap.cond.L.Lock()
 	symmetricKeysMap.cond.Broadcast()
 	symmetricKeysMap.cond.L.Unlock()
 }
 
-func DeleteSymmetricKeysValue(ksymmetricKeysMap *SymmetricKeys, key string) {
+func DeleteSymmetricKeysValue(ksymmetricKeysMap *symmetricKeys, key string) {
 	ksymmetricKeysMap.mutex.Lock()
 	_, exists := ksymmetricKeysMap.data[key]
 	if exists {
@@ -44,14 +45,14 @@ func DeleteSymmetricKeysValue(ksymmetricKeysMap *SymmetricKeys, key string) {
 	ksymmetricKeysMap.mutex.Unlock()
 }
 
-func GetSymmetricKeysValue(symmetricKeysMap *SymmetricKeys, key string) (value []byte, exists bool) {
+func GetSymmetricKeysValue(symmetricKeysMap *symmetricKeys, key string) (value []byte, exists bool) {
 	symmetricKeysMap.mutex.Lock()
 	value, exists = symmetricKeysMap.data[key]
 	symmetricKeysMap.mutex.Unlock()
 	return value, exists
 }
 
-func WaitForSymmetricKeysValue(symmetricKeysMap *SymmetricKeys, key string) (value []byte) {
+func WaitForSymmetricKeysValue(symmetricKeysMap *symmetricKeys, key string) (value []byte) {
 	// TODO if this works when multiple routines are waiting at the same time
 	// 	In the worst case the second one cannot aquire the cond.L.Lock() and has to wait for the first to get its values
 	// 	before being able to continue
@@ -75,23 +76,23 @@ type KeyPair struct {
 	PublicKey  []byte
 }
 
-type KeyPairs struct {
+type keyPairs struct {
 	data  map[string]KeyPair
 	mutex sync.Mutex
 }
 
-func InitKeyPairs() *KeyPairs {
-	return &KeyPairs{data: make(map[string]KeyPair)}
+func InitKeyPairs() *keyPairs {
+	return &keyPairs{data: make(map[string]KeyPair)}
 }
 
-func GetKeyPairsValue(keyPairsMap *KeyPairs, key string) (value KeyPair, exists bool) {
+func GetKeyPairsValue(keyPairsMap *keyPairs, key string) (value KeyPair, exists bool) {
 	keyPairsMap.mutex.Lock()
 	value, exists = keyPairsMap.data[key]
 	keyPairsMap.mutex.Unlock()
 	return value, exists
 }
 
-func DeleteKeyPairsValue(keyPairsMap *KeyPairs, key string) {
+func DeleteKeyPairsValue(keyPairsMap *keyPairs, key string) {
 	keyPairsMap.mutex.Lock()
 	_, exists := keyPairsMap.data[key]
 	if exists {
@@ -100,30 +101,30 @@ func DeleteKeyPairsValue(keyPairsMap *KeyPairs, key string) {
 	keyPairsMap.mutex.Unlock()
 }
 
-func SetKeyPairsValue(keyPairsMap *KeyPairs, key string, value KeyPair) {
+func SetKeyPairsValue(keyPairsMap *keyPairs, key string, value KeyPair) {
 	keyPairsMap.mutex.Lock()
 	keyPairsMap.data[key] = value
 	keyPairsMap.mutex.Unlock()
 }
 
-type SequenceNumbers struct {
+type sequenceNumbers struct {
 	data  map[string]int
 	mutex sync.Mutex
 }
 
-func InitSequenceNumbers() *SequenceNumbers {
-	return &SequenceNumbers{
+func InitSequenceNumbers() *sequenceNumbers {
+	return &sequenceNumbers{
 		data: make(map[string]int),
 	}
 }
 
-func SetSequenceNumbersValue(sequenceNumbersMap *SequenceNumbers, key string, value int) {
+func SetSequenceNumbersValue(sequenceNumbersMap *sequenceNumbers, key string, value int) {
 	sequenceNumbersMap.mutex.Lock()
 	sequenceNumbersMap.data[key] = value
 	sequenceNumbersMap.mutex.Unlock()
 }
 
-func DeleteSequenceNumbersValue(sequenceNumbersMap *SequenceNumbers, key string) {
+func DeleteSequenceNumbersValue(sequenceNumbersMap *sequenceNumbers, key string) {
 	sequenceNumbersMap.mutex.Lock()
 	_, exists := sequenceNumbersMap.data[key]
 	if exists {
@@ -132,14 +133,14 @@ func DeleteSequenceNumbersValue(sequenceNumbersMap *SequenceNumbers, key string)
 	sequenceNumbersMap.mutex.Unlock()
 }
 
-func GetSequenceNumbersValue(sequenceNumbersMap *SequenceNumbers, key string) (value int, exists bool) {
+func GetSequenceNumbersValue(sequenceNumbersMap *sequenceNumbers, key string) (value int, exists bool) {
 	sequenceNumbersMap.mutex.Lock()
 	value, exists = sequenceNumbersMap.data[key]
 	sequenceNumbersMap.mutex.Unlock()
 	return value, exists
 }
 
-func GetAndIncrementSequenceNumbersValue(sequenceNumbersMap *SequenceNumbers, key string) (value int, exists bool) {
+func GetAndIncrementSequenceNumbersValue(sequenceNumbersMap *sequenceNumbers, key string) (value int, exists bool) {
 	sequenceNumbersMap.mutex.Lock()
 	value, exists = sequenceNumbersMap.data[key]
 	if exists {
@@ -149,31 +150,31 @@ func GetAndIncrementSequenceNumbersValue(sequenceNumbersMap *SequenceNumbers, ke
 	return value, exists
 }
 
-type Peers struct {
+type peers struct {
 	data  map[string]*OnionPeer
 	mutex sync.Mutex
 }
 
-func InitPeers() *Peers {
-	return &Peers{
+func InitPeers() *peers {
+	return &peers{
 		data: make(map[string]*OnionPeer),
 	}
 }
 
-func SetPeer(peersMap *Peers, key string, peer *OnionPeer) {
+func SetPeer(peersMap *peers, key string, peer *OnionPeer) {
 	peersMap.mutex.Lock()
 	peersMap.data[key] = peer
 	peersMap.mutex.Unlock()
 }
 
-func GetPeer(peersMap *Peers, key string) (value *OnionPeer, exists bool) {
+func GetPeer(peersMap *peers, key string) (value *OnionPeer, exists bool) {
 	peersMap.mutex.Lock()
 	value, exists = peersMap.data[key]
 	peersMap.mutex.Unlock()
 	return value, exists
 }
 
-func DeletePeer(peersMap *Peers, key string) {
+func DeletePeer(peersMap *peers, key string) {
 	peersMap.mutex.Lock()
 	_, exists := peersMap.data[key]
 	if exists {
@@ -182,50 +183,141 @@ func DeletePeer(peersMap *Peers, key string) {
 	peersMap.mutex.Unlock()
 }
 
+type TunnelType int
+
+const (
+	TUNNEL_TYPE_INITIATOR   TunnelType = 0
+	TUNNEL_TYPE_HOP         TunnelType = 1
+	TUNNEL_TYPE_DESTINATION TunnelType = 2
+)
+
+type Forwarder struct {
+	NextHop     *Hop
+	PreviousHop *Hop
+}
+
+type Hop struct {
+	TPort   uint32
+	Address string
+}
+
 type Tunnel struct {
 	Hops        *list.List
 	Destination *OnionPeer
 }
 
 type OnionPeer struct {
-	TPort           uint32
+	// TODO do we need these two ports for anything but the first hop? Maybe but it somewhere else if that's the case?
+	TPortForward    uint32
+	TPortReverse    uint32
 	Address         string
 	Hostkey         *rsa.PublicKey
 	ReceivingSeqNum uint32
 	SendingSeqNum   uint32
+	DHPublicKey     []byte
+	DHPrivateKey    []byte
+	SharedSecret    []byte
 }
 
-type Tunnels struct {
+type tunnels struct {
 	data  map[uint32]*Tunnel
 	mutex sync.Mutex
 }
 
-func InitTunnels() *Tunnels {
-	return &Tunnels{
+type peerTPorts struct {
+	data  map[string]*list.List
+	mutex sync.Mutex
+}
+
+func InitPeerTPorts() *peerTPorts {
+	return &peerTPorts{
+		data: make(map[string]*list.List),
+	}
+}
+
+func AddPeerTPort(peerTPortsMap *peerTPorts, key string, value uint32) error {
+	peerTPortsMap.mutex.Lock()
+	lst, exists := peerTPortsMap.data[key]
+	if !exists {
+		lst = list.New()
+		lst.PushBack(value)
+		peerTPortsMap.data[key] = lst
+	} else {
+		valueAlreadyExists := false
+		for cur := lst.Front(); cur != nil; cur = cur.Next() {
+			if cur.Value == value {
+				valueAlreadyExists = true
+				break
+			}
+		}
+		if !valueAlreadyExists {
+			// TODO Test adding multiple values to one list using AddPeerTPort
+			lst.PushBack(value)
+		} else {
+			return errors.New("ValueAlreadyExists")
+		}
+	}
+	peerTPortsMap.mutex.Unlock()
+	return nil
+}
+
+func DeletePeerTPort(peerTPortsMap *peerTPorts, key string, value uint32) {
+	peerTPortsMap.mutex.Lock()
+	lst, exists := peerTPortsMap.data[key]
+	if exists {
+		for cur := lst.Front(); cur != nil; cur = cur.Next() {
+			if cur.Value == value {
+				lst.Remove(cur)
+				break
+			}
+		}
+		if lst.Len() == 0 {
+			delete(peerTPortsMap.data, key)
+		}
+	}
+	peerTPortsMap.mutex.Unlock()
+}
+
+func GetPeerTPorts(peerTPortsMap *peerTPorts, key string) (*list.List, bool) {
+	peerTPortsMap.mutex.Lock()
+	lst, exists := peerTPortsMap.data[key]
+	peerTPortsMap.mutex.Unlock()
+	return lst, exists
+}
+
+func InitTunnels() *tunnels {
+	return &tunnels{
 		data: make(map[uint32]*Tunnel),
 	}
 }
 
-func SetTunnel(tunnelMap *Tunnels, key uint32, value *Tunnel) {
+func SetTunnel(tunnelMap *tunnels, key uint32, value *Tunnel) {
 	tunnelMap.mutex.Lock()
 	tunnelMap.data[key] = value
 	tunnelMap.mutex.Unlock()
 }
 
-func GetTunnel(tunnelMap *Tunnels, key uint32) (value *Tunnel, exists bool) {
+func GetTunnel(tunnelMap *tunnels, key uint32) (value *Tunnel, exists bool) {
 	tunnelMap.mutex.Lock()
 	value, exists = tunnelMap.data[key]
 	tunnelMap.mutex.Unlock()
 	return value, exists
 }
 
-func RemoveTunnel(tunnelMap *Tunnels, key uint32) {
+func RemoveTunnel(tunnelMap *tunnels, key uint32) {
 	tunnelMap.mutex.Lock()
 	_, exists := tunnelMap.data[key]
 	if exists {
 		delete(tunnelMap.data, key)
 	}
 	tunnelMap.mutex.Unlock()
+}
+
+func ExistsTunnel(tunnelMap *tunnels, key uint32) bool {
+	tunnelMap.mutex.Lock()
+	_, exists := tunnelMap.data[key]
+	tunnelMap.mutex.Unlock()
+	return exists
 }
 
 type notifyGroup struct {

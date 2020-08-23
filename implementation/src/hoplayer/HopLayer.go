@@ -26,11 +26,13 @@ var flowMap = make(map[string]int)
 
 // contains the next used sequence number
 var sendingSeqNums = storage.InitSequenceNumbers()
+
 // contains the next expected sequence number
 var receivingSeqNums = storage.InitSequenceNumbers()
 
 // stores derived symmetric keys
 var keyMap = storage.InitSymmetricKeys()
+
 // stores uncompleted DH Handshake
 var openDHs = storage.InitKeyPairs()
 
@@ -224,7 +226,7 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 	if receivedSeqNum != curSeqNum {
 		logger.Info.Println("Some sequence numbers were missed, possibly due to lost packets. Expected sequence number: " + strconv.Itoa(curSeqNum) + "; received sequence number: " + strconv.Itoa(receivedSeqNum))
 	}
-	storage.SetSequenceNumbersValue(receivingSeqNums, addrStr, receivedSeqNum + 1)
+	storage.SetSequenceNumbersValue(receivingSeqNums, addrStr, receivedSeqNum+1)
 	logger.Info.Println("Got message (length " + strconv.Itoa(int(size)) + "): " + string(plaintext[6:size+6]))
 	callback(addr, plaintext[6:size+6])
 	return
