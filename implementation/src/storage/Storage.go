@@ -151,23 +151,23 @@ func GetAndIncrementSequenceNumbersValue(sequenceNumbersMap *sequenceNumbers, ke
 }
 
 type peers struct {
-	data  map[string]*OnionPeer
+	data  map[string]*Forwarder
 	mutex sync.Mutex
 }
 
 func InitPeers() *peers {
 	return &peers{
-		data: make(map[string]*OnionPeer),
+		data: make(map[string]*Forwarder),
 	}
 }
 
-func SetPeer(peersMap *peers, key string, peer *OnionPeer) {
+func SetPeer(peersMap *peers, key string, peer *Forwarder) {
 	peersMap.mutex.Lock()
 	peersMap.data[key] = peer
 	peersMap.mutex.Unlock()
 }
 
-func GetPeer(peersMap *peers, key string) (value *OnionPeer, exists bool) {
+func GetPeer(peersMap *peers, key string) (value *Forwarder, exists bool) {
 	peersMap.mutex.Lock()
 	value, exists = peersMap.data[key]
 	peersMap.mutex.Unlock()
@@ -186,14 +186,54 @@ func DeletePeer(peersMap *peers, key string) {
 type TunnelType int
 
 const (
-	TUNNEL_TYPE_INITIATOR   TunnelType = 0
-	TUNNEL_TYPE_HOP         TunnelType = 1
-	TUNNEL_TYPE_DESTINATION TunnelType = 2
+	TUNNEL_TYPE_INITIATOR          TunnelType = 0
+	TUNNEL_TYPE_HOP                TunnelType = 1
+	TUNNEL_TYPE_DESTINATION        TunnelType = 2
+	TUNNEL_TYPE_HOP_OR_DESTINATION TunnelType = 3
 )
 
 type Forwarder struct {
-	NextHop     *Hop
-	PreviousHop *Hop
+	NextHop         *Hop
+	PreviousHop     *Hop
+	TType           TunnelType
+	ReceivingSeqNum uint32
+	SendingSeqNum   uint32
+	DHPublicKey     []byte
+	DHPrivateKey    []byte
+	SharedSecret    []byte
+}
+
+type forwarders struct {
+	data  map[string]*Forwarder
+	mutex sync.Mutex
+}
+
+func InitForwarders() *forwarders {
+	return &forwarders{
+		data: make(map[string]*Forwarder),
+	}
+}
+
+func SetForwarder(forwarderMap *forwarders, key string, value *Forwarder) {
+	forwarderMap.mutex.Lock()
+	forwarderMap.data[key] = value
+	forwarderMap.mutex.Unlock()
+}
+
+func GetForwarder(forwarderMap *forwarders, key string) (*Forwarder, bool) {
+	forwarderMap.mutex.Lock()
+	value, exists := forwarderMap.data[key]
+	forwarderMap.mutex.Unlock()
+	return value, exists
+}
+
+func DeleteForwarder(forwarderMap *forwarders, key string) {
+	forwarderMap.mutex.Lock()
+	_, exists := forwarderMap.data[key]
+	if exists {
+		delete(forwarderMap.data, key)
+	}
+	forwarderMap.mutex.Unlock()
 }
 
 type Hop struct {
@@ -202,14 +242,11 @@ type Hop struct {
 }
 
 type Tunnel struct {
-	Hops        *list.List
+	Peers       *list.List
 	Destination *OnionPeer
 }
 
 type OnionPeer struct {
-	// TODO do we need these two ports for anything but the first hop? Maybe but it somewhere else if that's the case?
-	TPortForward    uint32
-	TPortReverse    uint32
 	Address         string
 	Hostkey         *rsa.PublicKey
 	ReceivingSeqNum uint32

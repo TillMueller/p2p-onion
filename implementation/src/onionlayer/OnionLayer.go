@@ -22,12 +22,16 @@ const (
 	// TODO move timeout to config?
 	// timeout
 	RESP_TIMEOUT = 5 * time.Second
+	PUBKEY_LENGTH = 178
 
 	MSG_KEYXCHG     uint8 = 0x00
 	MSG_KEYXCHGRESP uint8 = 0x01
 	MSG_EXTEND      uint8 = 0x02
-	MSG_FORWARD     uint8 = 0x03
-	MSG_DATA        uint8 = 0x04
+	MSG_COMPLETE	uint8 = 0x03
+	MSG_FORWARD     uint8 = 0x04
+	MSG_DATA        uint8 = 0x05
+
+	LOCAL_FORWARDER string = "_localhost_"
 )
 
 // TODO create cleanup function that e.g. closes the UDP connection when the program exits
@@ -39,6 +43,7 @@ const (
 
 var tunnels = storage.InitTunnels()
 var notifyGroups = storage.InitNotifyGroups()
+var forwarders = storage.InitForwarders()
 
 // This list is only used to avoid TPort collisions (the tuple (peerAddressString, TPort) is assumed to be unique)
 var peerTPorts = storage.InitPeerTPorts()
@@ -93,36 +98,95 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		logger.Warning.Println("Received packet is too short (size " + strconv.Itoa(len(data)) + ")")
 		return
 	}
+	// find the local forwarder this packet is meant for
 	tPort := binary.BigEndian.Uint32(data[:4])
-	seqNum := binary.BigEndian.Uint32(data[4:8])
-	// get peer to check sequence number
-	addressString := peerAddressToString(addr.IP, addr.IP.To4() == nil, uint16(addr.Port))
-	tunnel, exists := storage.GetTunnel(tunnels, tunnelID)
+	peerAddressString := peerAddressToString(addr.IP, addr.IP.To4() == nil, uint16(addr.Port))
+	forwarderIdentifier := getPeerIdentifier(peerAddressString, tPort)
+	forwarder, exists := storage.GetForwarder(forwarders, forwarderIdentifier)
 	if !exists {
-		logger.Warning.Println("Got message from unknown peer " + addressString)
+		// seq num is unencrypted on the onion layer for KEYXCHG
+		seqNum := binary.BigEndian.Uint32(data[4:8])
+		// TODO
+		// this is an unknown peer address / tport combination, so a new tunnel is being built
+		// we expect a keyxchg now and need create a new forwarder, then answer with a keyxchgresp
+		// if it is not a keyxch, answer with a reset message
+		logger.Info.Println("Got unknown tport / address combination, assuming KEYXCHG: " + forwarderIdentifier)
+		if data[8] != MSG_KEYXCHG {
+			logger.Warning.Println("Unknown tport / address combination did not contain KEYXCHG, sending reset message")
+			// TODO answer with reset message
+			return
+		}
+		privateKey, publicKey, err := dh.GenKeyPair()
+		if err != nil {
+			logger.Error.Println("Could not generate keypair for KEYXCHGRESP for peer " + forwarderIdentifier)
+			return
+		}
+		peerPublicKey := data[9:]
+		if len(peerPublicKey) != PUBKEY_LENGTH {
+			logger.Error.Println("Got public key of wrong size from peer " + forwarderIdentifier)
+			return
+		}
+		sharedSecret, err := dh.DeriveSharedSecret(privateKey, peerPublicKey)
+		if err != nil {
+			logger.Error.Println("Could not derivce shared secret from KEYXCHG message from peer " + forwarderIdentifier)
+			return
+		}
+		newForwarder := &storage.Forwarder{
+			NextHop:         nil,
+			PreviousHop:     &storage.Hop{
+				TPort:   tPort,
+				Address: peerAddressString,
+			},
+			TType:           storage.TUNNEL_TYPE_HOP_OR_DESTINATION,
+			ReceivingSeqNum: seqNum,
+			SendingSeqNum:   0,
+			DHPublicKey:     publicKey,
+			DHPrivateKey:    privateKey,
+			SharedSecret:    sharedSecret,
+		}
+		storage.SetForwarder(forwarders, forwarderIdentifier, newForwarder)
+		// generate KEYXCHGRESP
+		respBuf := make([]byte, 5)
+		binary.BigEndian.PutUint32(respBuf[0:4], newForwarder.SendingSeqNum)
+		respBuf[4] = MSG_KEYXCHGRESP
+		respBuf = append(respBuf, publicKey...)
+		err = sendMessage(newForwarder, false, respBuf)
+		if err != nil {
+			logger.Error.Println("Could not send KEYXCHGRESP message")
+			return
+		}
+	}
+	msg, err := encryption.Decrypt(forwarder.SharedSecret, data)
+	if err != nil {
+		logger.Error.Println("Could not decrypt message from known peer " + forwarderIdentifier)
 		return
 	}
+	seqNum := binary.BigEndian.Uint32(msg[0:4])
 	// check sequence number
-	if peer.ReceivingSeqNum > seqNum {
-		logger.Warning.Println("Got message with repeating sequence number from peer " + addressString)
+	if forwarder.ReceivingSeqNum > seqNum {
+		logger.Warning.Println("Got message with repeating sequence number from peer " + forwarderIdentifier)
 		return
 	}
-	if peer.ReceivingSeqNum < seqNum {
-		logger.Info.Println("Received sequence number higher " + strconv.Itoa(int(seqNum)) + " than expected sequence number" + strconv.Itoa(int(peer.ReceivingSeqNum)) + ", assuming missed packets (peer ID " + peerIdentifier + ")")
+	if forwarder.ReceivingSeqNum < seqNum {
+		logger.Info.Println("Received sequence number higher " + strconv.Itoa(int(seqNum)) + " than expected sequence number" + strconv.Itoa(int(forwarder.ReceivingSeqNum)) + ", assuming missed packets (peer " + forwarderIdentifier + ")")
 	}
-	msgId := data[9]
+	forwarder.ReceivingSeqNum++
+	msgId := msg[5]
 	// TODO
 	switch msgId {
-	case MSG_KEYXCHG:
-
 	case MSG_KEYXCHGRESP:
 
 	case MSG_EXTEND:
+
+	case MSG_COMPLETE:
 
 	case MSG_FORWARD:
 
 	case MSG_DATA:
 
+	default:
+		logger.Error.Println("Got unknown message type " + strconv.Itoa(int(msgId)) + " from peer " + forwarderIdentifier)
+		return
 	}
 }
 
@@ -134,7 +198,27 @@ func ipLength(addressIsIPv6 bool) int {
 	}
 }
 
-func sendMessage(hops *list.List, finalPeer *storage.OnionPeer, data []byte) error {
+// sendMessage assumes that data is an encrypted packet with the following fields:
+// seqNum, msgType, data
+func sendMessage(forwarder *storage.Forwarder, sendFoward bool, data []byte) error {
+	var hop *storage.Hop
+	if sendFoward {
+		hop = forwarder.NextHop
+	} else {
+		hop = forwarder.PreviousHop
+	}
+	msgBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(msgBuf[0:4], hop.TPort)
+	msgBuf = append(msgBuf, data...)
+	err := hoplayer.SendPacket(udpconn, hop.Address, msgBuf)
+	if err != nil {
+		logger.Error.Println("Could not send message to " + hop.Address)
+		return errors.New("NetworkError")
+	}
+	return nil
+}
+
+func sendIntoTunnel(tunnelID uint32, hops *list.List, finalPeer *storage.OnionPeer, data []byte) error {
 	// wrap message once for each hop (in reverse order)
 	msgBuf := data
 	for cur := hops.Back(); cur != nil; cur = cur.Prev() {
@@ -158,6 +242,12 @@ func sendMessage(hops *list.List, finalPeer *storage.OnionPeer, data []byte) err
 	}
 	var sendToAddress string
 	tPortBuf := make([]byte, 4)
+	localForwarder, exists := storage.GetForwarder(forwarders, getPeerIdentifier(LOCAL_FORWARDER, tunnelID))
+	if !exists {
+		logger.Error.Println("Could not find local forwarder for tunnelID " + strconv.Itoa(int(tunnelID)))
+		return errors.New("InternalError")
+	}
+	binary.BigEndian.PutUint32(tPortBuf, localForwarder.NextHop.TPort)
 	if hops.Front() != nil {
 		firstHop, typeCheck := hops.Front().Value.(*storage.OnionPeer)
 		if !typeCheck {
@@ -165,11 +255,8 @@ func sendMessage(hops *list.List, finalPeer *storage.OnionPeer, data []byte) err
 			return errors.New("InternalError")
 		}
 		sendToAddress = firstHop.Address
-		binary.BigEndian.PutUint32(tPortBuf, firstHop.TPortReverse)
 	} else {
 		sendToAddress = finalPeer.Address
-		// set the tport we would like to use for this communication
-		binary.BigEndian.PutUint32(tPortBuf, finalPeer.TPortReverse)
 	}
 	msgBuf = append(tPortBuf, msgBuf...)
 	err := hoplayer.SendPacket(udpconn, sendToAddress, msgBuf)
@@ -224,9 +311,14 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 		SendingSeqNum:   0,
 	}
 
-	curTunnel := storage.Tunnel{Hops: list.New(), Destination: &destinationPeer}
-	for curTunnel.Hops.Len() < config.Intermediate_hops {
-		logger.Info.Println("Building tunnel (ID " + strconv.Itoa(int(tunnelID)) + "), got " + strconv.Itoa(curTunnel.Hops.Len()) + " of " + strconv.Itoa(config.Intermediate_hops) + " hops")
+	curForwarder := storage.Forwarder{
+		NextHop:     nil,
+		PreviousHop: nil,
+		TType:       storage.TUNNEL_TYPE_INITIATOR,
+	}
+	curTunnel := storage.Tunnel{Peers: list.New(), Destination: &destinationPeer}
+	for curTunnel.Peers.Len() < config.Intermediate_hops {
+		logger.Info.Println("Building tunnel (ID " + strconv.Itoa(int(tunnelID)) + "), got " + strconv.Itoa(curTunnel.Peers.Len()) + " of " + strconv.Itoa(config.Intermediate_hops) + " hops")
 		err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey := api.RPSQuery()
 		if err != nil {
 			logger.Warning.Println("Could not solicit peer from RPS")
@@ -234,7 +326,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 		}
 		peerAddressString := peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort)
 		skipPeer := false
-		for cur := curTunnel.Hops.Front(); cur != nil; cur = cur.Next() {
+		for cur := curTunnel.Peers.Front(); cur != nil; cur = cur.Next() {
 			curHop, typeCheck := cur.Value.(*storage.OnionPeer)
 			if !typeCheck {
 				logger.Warning.Println("Got object of wrong type from peer list")
@@ -272,20 +364,27 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 			continue
 		}
 		// special case for the first hop since we can set the tport and have to send KEYXCHG instead of EXTEND
-		if curTunnel.Hops.Len() == 0 {
+		if curTunnel.Peers.Len() == 0 {
 			tPortReverse, err := generateAndClaimUnusedTPort(peerAddressString)
 			if err != nil {
 				logger.Warning.Println("Could not generate TPort for communication with first hop: " + peerAddressString)
 				continue
 			}
-			curPeer.TPortReverse = tPortReverse
+			curForwarder.NextHop = &storage.Hop{
+				TPort:   tPortReverse,
+				Address: LOCAL_FORWARDER,
+			}
 			msgBuf := make([]byte, 1)
 			msgBuf[0] = MSG_KEYXCHG
 			msgBuf = append(msgBuf, encryptedNonce...)
-			err = sendMessage(curTunnel.Hops, &curPeer, msgBuf)
+			err = sendIntoTunnel(tunnelID, curTunnel.Peers, &curPeer, msgBuf)
 			if err != nil {
 				logger.Warning.Println("Could not send DH keyexchange to peer " + peerAddressString)
 				continue
+			}
+			curForwarder.NextHop = &storage.Hop{
+				TPort:   tPortReverse,
+				Address: peerAddressString,
 			}
 		} else {
 			var peerAddressIsIPv6Byte byte
@@ -307,7 +406,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 			}
 			msgBuf = append(msgBuf, onionPortBytes...)
 			msgBuf = append(msgBuf, encryptedNonce...)
-			err = sendMessage(curTunnel.Hops, &curPeer, msgBuf)
+			err = sendIntoTunnel(tunnelID, curTunnel.Peers, &curPeer, msgBuf)
 			if err != nil {
 				logger.Warning.Println("Could not send extend message to peer " + peerAddressString)
 				continue
@@ -317,7 +416,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 		// If it is here: awesome, carry on. If it is not: Choose another hop
 		storage.WaitForNotifyGroup(notifyGroups, peerIdentifier, RESP_TIMEOUT)
 		storage.CleanupNotifyGroup(notifyGroups, peerIdentifier)
-
+		// TODO
 	}
 	return tunnelID, nil
 }
