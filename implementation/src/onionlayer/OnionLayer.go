@@ -21,13 +21,13 @@ import (
 const (
 	// TODO move timeout to config?
 	// timeout
-	RESP_TIMEOUT = 5 * time.Second
+	RESP_TIMEOUT  = 5 * time.Second
 	PUBKEY_LENGTH = 178
 
 	MSG_KEYXCHG     uint8 = 0x00
 	MSG_KEYXCHGRESP uint8 = 0x01
 	MSG_EXTEND      uint8 = 0x02
-	MSG_COMPLETE	uint8 = 0x03
+	MSG_COMPLETE    uint8 = 0x03
 	MSG_FORWARD     uint8 = 0x04
 	MSG_DATA        uint8 = 0x05
 
@@ -110,49 +110,53 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		// this is an unknown peer address / tport combination, so a new tunnel is being built
 		// we expect a keyxchg now and need create a new forwarder, then answer with a keyxchgresp
 		// if it is not a keyxch, answer with a reset message
-		logger.Info.Println("Got unknown tport / address combination, assuming KEYXCHG: " + forwarderIdentifier)
-		if data[8] != MSG_KEYXCHG {
-			logger.Warning.Println("Unknown tport / address combination did not contain KEYXCHG, sending reset message")
+		logger.Info.Println("Got unknown tport / address combination, assuming KEYXCHG or KEYXCHGRESP: " + forwarderIdentifier)
+		switch data[8] {
+		case MSG_KEYXCHG:
+			privateKey, publicKey, err := dh.GenKeyPair()
+			if err != nil {
+				logger.Error.Println("Could not generate keypair for KEYXCHGRESP for peer " + forwarderIdentifier)
+				return
+			}
+			peerPublicKey := data[9:]
+			if len(peerPublicKey) != PUBKEY_LENGTH {
+				logger.Error.Println("Got public key of wrong size from peer " + forwarderIdentifier)
+				return
+			}
+			sharedSecret, err := dh.DeriveSharedSecret(privateKey, peerPublicKey)
+			if err != nil {
+				logger.Error.Println("Could not derivce shared secret from KEYXCHG message from peer " + forwarderIdentifier)
+				return
+			}
+			newForwarder := &storage.Forwarder{
+				NextHop: nil,
+				PreviousHop: &storage.Hop{
+					TPort:   tPort,
+					Address: peerAddressString,
+				},
+				TType:           storage.TUNNEL_TYPE_HOP_OR_DESTINATION,
+				ReceivingSeqNum: seqNum,
+				SendingSeqNum:   0,
+				DHPublicKey:     publicKey,
+				DHPrivateKey:    privateKey,
+				SharedSecret:    sharedSecret,
+			}
+			storage.SetForwarder(forwarders, forwarderIdentifier, newForwarder)
+			// generate KEYXCHGRESP
+			respBuf := make([]byte, 5)
+			binary.BigEndian.PutUint32(respBuf[0:4], newForwarder.SendingSeqNum)
+			respBuf[4] = MSG_KEYXCHGRESP
+			respBuf = append(respBuf, publicKey...)
+			err = sendMessage(newForwarder, false, respBuf)
+			if err != nil {
+				logger.Error.Println("Could not send KEYXCHGRESP message")
+				return
+			}
+		case MSG_KEYXCHGRESP:
+
+		default:
+			logger.Warning.Println("Unknown tport / address combination did not contain KEYXCHG or KEYXCHGRESP, sending reset message")
 			// TODO answer with reset message
-			return
-		}
-		privateKey, publicKey, err := dh.GenKeyPair()
-		if err != nil {
-			logger.Error.Println("Could not generate keypair for KEYXCHGRESP for peer " + forwarderIdentifier)
-			return
-		}
-		peerPublicKey := data[9:]
-		if len(peerPublicKey) != PUBKEY_LENGTH {
-			logger.Error.Println("Got public key of wrong size from peer " + forwarderIdentifier)
-			return
-		}
-		sharedSecret, err := dh.DeriveSharedSecret(privateKey, peerPublicKey)
-		if err != nil {
-			logger.Error.Println("Could not derivce shared secret from KEYXCHG message from peer " + forwarderIdentifier)
-			return
-		}
-		newForwarder := &storage.Forwarder{
-			NextHop:         nil,
-			PreviousHop:     &storage.Hop{
-				TPort:   tPort,
-				Address: peerAddressString,
-			},
-			TType:           storage.TUNNEL_TYPE_HOP_OR_DESTINATION,
-			ReceivingSeqNum: seqNum,
-			SendingSeqNum:   0,
-			DHPublicKey:     publicKey,
-			DHPrivateKey:    privateKey,
-			SharedSecret:    sharedSecret,
-		}
-		storage.SetForwarder(forwarders, forwarderIdentifier, newForwarder)
-		// generate KEYXCHGRESP
-		respBuf := make([]byte, 5)
-		binary.BigEndian.PutUint32(respBuf[0:4], newForwarder.SendingSeqNum)
-		respBuf[4] = MSG_KEYXCHGRESP
-		respBuf = append(respBuf, publicKey...)
-		err = sendMessage(newForwarder, false, respBuf)
-		if err != nil {
-			logger.Error.Println("Could not send KEYXCHGRESP message")
 			return
 		}
 	}
@@ -174,8 +178,6 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 	msgId := msg[5]
 	// TODO
 	switch msgId {
-	case MSG_KEYXCHGRESP:
-
 	case MSG_EXTEND:
 
 	case MSG_COMPLETE:
@@ -311,7 +313,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 		SendingSeqNum:   0,
 	}
 
-	curForwarder := storage.Forwarder{
+	sourceForwarder := storage.Forwarder{
 		NextHop:     nil,
 		PreviousHop: nil,
 		TType:       storage.TUNNEL_TYPE_INITIATOR,
@@ -370,23 +372,20 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 				logger.Warning.Println("Could not generate TPort for communication with first hop: " + peerAddressString)
 				continue
 			}
-			curForwarder.NextHop = &storage.Hop{
-				TPort:   tPortReverse,
-				Address: LOCAL_FORWARDER,
-			}
 			msgBuf := make([]byte, 1)
 			msgBuf[0] = MSG_KEYXCHG
 			msgBuf = append(msgBuf, encryptedNonce...)
-			err = sendIntoTunnel(tunnelID, curTunnel.Peers, &curPeer, msgBuf)
+			sourceForwarder.NextHop = &storage.Hop{
+				TPort:   tPortReverse,
+				Address: peerAddressString,
+			}
+			err = sendMessage(&sourceForwarder, true, msgBuf)
 			if err != nil {
 				logger.Warning.Println("Could not send DH keyexchange to peer " + peerAddressString)
 				continue
 			}
-			curForwarder.NextHop = &storage.Hop{
-				TPort:   tPortReverse,
-				Address: peerAddressString,
-			}
 		} else {
+			// TODO extend tunnel
 			var peerAddressIsIPv6Byte byte
 			if peerAddressIsIPv6 {
 				peerAddressIsIPv6Byte = 0
@@ -414,8 +413,8 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 		}
 		// Five second timeout, so the response might not be there afterwards
 		// If it is here: awesome, carry on. If it is not: Choose another hop
-		storage.WaitForNotifyGroup(notifyGroups, peerIdentifier, RESP_TIMEOUT)
-		storage.CleanupNotifyGroup(notifyGroups, peerIdentifier)
+		storage.WaitForNotifyGroup(notifyGroups, forwarderIdentifier, RESP_TIMEOUT)
+		storage.CleanupNotifyGroup(notifyGroups, forwarderIdentifier)
 		// TODO
 	}
 	return tunnelID, nil
