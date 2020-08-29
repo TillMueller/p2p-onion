@@ -8,23 +8,26 @@ import (
 	"crypto/sha1"
 	"errors"
 	"onion/logger"
+	"strconv"
 )
 
 // Encrypt encrypts a plaintext using AES with the given key
 // An IV will be regenerated every time and prepended to the encrypted data
 // adapted from https://golang.org/src/crypto/cipher/example_test.go
 func Encrypt(key []byte, text []byte) ([]byte, error) {
-	plaintext := []byte(text)
-	block, err := aes.NewCipher(key[:])
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		logger.Error.Println("Invalid key")
 		return nil, errors.New("InvalidArgumentError")
 	}
-	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
-	iv := ciphertext[:aes.BlockSize]
-	rand.Read(iv)
-	stream := cipher.NewCFBEncrypter(block, iv)
-	stream.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
+	ciphertext := make([]byte, aes.BlockSize+len(text))
+	_, err = rand.Read(ciphertext[:aes.BlockSize])
+	if err != nil {
+		logger.Error.Println("Could not read random IV")
+		return nil, errors.New("CryptoError")
+	}
+	stream := cipher.NewCFBEncrypter(block, ciphertext[:aes.BlockSize])
+	stream.XORKeyStream(ciphertext[aes.BlockSize:], text)
 	return ciphertext, nil
 }
 
@@ -38,7 +41,7 @@ func Decrypt(key []byte, ciphertext []byte) ([]byte, error) {
 		return nil, errors.New("InvalidArgumentError")
 	}
 	if len(ciphertext) < aes.BlockSize {
-		logger.Error.Println("Ciphertext too short")
+		logger.Error.Println("Ciphertext too short (expected >= " + strconv.Itoa(aes.BlockSize) + ", got " + strconv.Itoa(len(ciphertext)) + ")")
 		return nil, errors.New("InvalidArgumentError")
 	}
 	iv := ciphertext[:aes.BlockSize]

@@ -36,11 +36,6 @@ const (
 )
 
 // TODO create cleanup function that e.g. closes the UDP connection when the program exits
-// TODO register receiver for incoming onion packets on config-defined port; maybe in init for this module?
-// TODO think about how to identify peers - we could also have a list of peers in each tunnel and then identify them with a (tunnelID, index) tuple
-// DONE we're going to need a way of notifying a currently waiting instance of BuildTunnel (or any other function that requires responses) when a response for it comes in:
-// 		- One possible way would be a list and notifications like in the HopLayer
-//		- Alternatively the waiting instance creates a channel where we send the message when it arrives
 
 var tunnels = storage.InitTunnels()
 var notifyGroups = storage.InitNotifyGroups()
@@ -95,6 +90,19 @@ func getPeerIdentifier(peerAddress string, tunnelID uint32) (identifier string) 
 	return peerAddress + ":" + strconv.Itoa(int(tunnelID))
 }
 
+func encryptAndAddSeqNum(forwarder *storage.Forwarder, forwarderIdentifier string, data []byte) ([]byte, error) {
+	seqNumBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(seqNumBuf, forwarder.SendingSeqNum)
+	forwarder.SendingSeqNum++
+	msgBuf := append(seqNumBuf, data...)
+	encryptedPacket, err := encryption.Encrypt(forwarder.SharedSecret, msgBuf)
+	if err != nil {
+		logger.Error.Println("Could not encrypt packet from " + forwarderIdentifier)
+		return nil, errors.New("CryptoError")
+	}
+	return encryptedPacket, nil
+}
+
 func decryptAndCheckSeqNum(forwarder *storage.Forwarder, forwarderIdentifier string, data []byte) ([]byte, error) {
 	msg, err := encryption.Decrypt(forwarder.SharedSecret, data)
 	if err != nil {
@@ -104,14 +112,14 @@ func decryptAndCheckSeqNum(forwarder *storage.Forwarder, forwarderIdentifier str
 	seqNum := binary.BigEndian.Uint32(msg[0:4])
 	// check sequence number
 	if forwarder.ReceivingSeqNum > seqNum {
-		logger.Warning.Println("Got message with repeating sequence number from peer " + forwarderIdentifier)
+		logger.Warning.Println("Got message with repeating sequence number from peer " + forwarderIdentifier + " (expected " + strconv.Itoa(int(forwarder.ReceivingSeqNum)) + ", got " + strconv.Itoa(int(seqNum)) + ")")
 		return nil, errors.New("ProtocolError")
 	}
 	if forwarder.ReceivingSeqNum < seqNum {
-		logger.Info.Println("Received sequence number higher " + strconv.Itoa(int(seqNum)) + " than expected sequence number" + strconv.Itoa(int(forwarder.ReceivingSeqNum)) + ", assuming missed packets (peer " + forwarderIdentifier + ")")
+		logger.Info.Println("Received sequence number higher " + strconv.Itoa(int(seqNum)) + " than expected sequence number " + strconv.Itoa(int(forwarder.ReceivingSeqNum)) + ", assuming missed packets (peer " + forwarderIdentifier + ")")
 	}
 	forwarder.ReceivingSeqNum = seqNum + 1
-	return msg[5:], nil
+	return msg[4:], nil
 }
 
 func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
@@ -128,9 +136,7 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		// seq num is unencrypted on the onion layer for KEYXCHG
 		seqNum := binary.BigEndian.Uint32(data[4:8])
 		// TODO
-		// this is an unknown peer address / tport combination, so a new tunnel is being built
-		// we expect a keyxchg now and need create a new forwarder, then answer with a keyxchgresp
-		// if it is not a keyxch, answer with a reset message
+		// if it is not a keyxchg, answer with a reset message
 		logger.Info.Println("Got unknown TPort / address combination, assuming KEYXCHG: " + forwarderIdentifier)
 		privateKey, publicKey, err := dh.GenKeyPair()
 		if err != nil {
@@ -160,16 +166,18 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 				Address: peerAddressString,
 			},
 			TType:           storage.TUNNEL_TYPE_HOP_OR_DESTINATION,
-			ReceivingSeqNum: seqNum,
+			ReceivingSeqNum: seqNum + 1,
 			SendingSeqNum:   0,
 			DHPublicKey:     peerPublicKey,
 			DHPrivateKey:    privateKey,
 			SharedSecret:    sharedSecret,
 		}
 		storage.SetForwarder(forwarders, forwarderIdentifier, newForwarder)
+		logger.Info.Println("Created new forwarder with identifier " + forwarderIdentifier)
 		// generate KEYXCHGRESP
 		respBuf := make([]byte, 5)
 		binary.BigEndian.PutUint32(respBuf[0:4], newForwarder.SendingSeqNum)
+		newForwarder.SendingSeqNum++
 		respBuf[4] = MSG_KEYXCHGRESP
 		respBuf = append(respBuf, publicKey...)
 		err = sendMessage(newForwarder, false, respBuf)
@@ -188,10 +196,37 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			logger.Error.Println("Could not find tunnel by ID even though I am the initiator: " + strconv.Itoa(int(forwarder.TunnelID)))
 			return
 		}
+		data = data[4:]
 		if tunnel.Peers.Len() != 1 {
-			// TODO decrypt packet layer by layer to get to the real message
-			logger.Error.Println("NOT IMPLEMENTED: KEYXCHGRESP from non-first hop")
-			return
+			// decrypt all but the last hop since it might not be encrypted if it is a KEYXCHGRESP
+			for cur := tunnel.Peers.Front(); cur.Next() != nil; cur = cur.Next() {
+				curPeer, typeCheck := cur.Value.(*storage.OnionPeer)
+				if !typeCheck {
+					logger.Error.Println("Got wrong type from peers list; message from " + forwarderIdentifier)
+					return
+				}
+				logger.Info.Println("Decrypting message with curPeer " + curPeer.Address)
+				decryptedMsg, err := encryption.Decrypt(curPeer.SharedSecret, data)
+				if err != nil {
+					logger.Warning.Println("Could not decrypt message from peer " + forwarderIdentifier + " at curPeer " + curPeer.Address)
+					return
+				}
+				// check sequence number
+				seqNum := binary.BigEndian.Uint32(decryptedMsg[:4])
+				if seqNum < curPeer.ReceivingSeqNum {
+					logger.Warning.Println("Got message with repeating sequence number from " + forwarderIdentifier +
+						" (got " + strconv.Itoa(int(seqNum)) + ", expected " + strconv.Itoa(int(curPeer.ReceivingSeqNum))+ ")")
+					return
+				}
+				if seqNum > curPeer.ReceivingSeqNum {
+					logger.Warning.Println("Got sequence number higher than expected, some packets are probably " +
+						"missing from " + forwarderIdentifier + " at curPeer " + curPeer.Address + " (expected " +
+						strconv.Itoa(int(curPeer.ReceivingSeqNum)) + ", got " + strconv.Itoa(int(seqNum)) + ")")
+				}
+				curPeer.ReceivingSeqNum = seqNum + 1
+				data = decryptedMsg[4:]
+				// TODO align data back with how it is when no decryption is done
+			}
 		}
 		// get the last hop in the tunnel, to see if we're still waiting for a key exchange with it
 		lastPeer, typeCheck := tunnel.Peers.Back().Value.(*storage.OnionPeer)
@@ -202,23 +237,23 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		if lastPeer.SharedSecret == nil {
 			// no shared secret, we therefore expect that we just got a KEYXCHGRESP
 			logger.Info.Println("Got message from hop with no shared secret, assuming KEYXCHGRESP")
-			seqNum := binary.BigEndian.Uint32(data[4:8])
-			if data[8] != MSG_KEYXCHGRESP {
-				logger.Warning.Println("Expected KEYXCHGRESP but got message of type " + strconv.Itoa(int(data[8])))
+			seqNum := binary.BigEndian.Uint32(data[:4])
+			if data[4] != MSG_KEYXCHGRESP {
+				logger.Warning.Println("Expected KEYXCHGRESP but got message of type " + strconv.Itoa(int(data[4])))
 				return
 			}
-			logger.Info.Println("Got DH public key for tunnel " + strconv.Itoa(int(forwarder.TunnelID)) + " of length " + strconv.Itoa(len(data[9:])))
-			lastPeer.ReceivingSeqNum = seqNum
-			lastPeer.DHPublicKey = data[9:]
+			logger.Info.Println("Got DH public key for tunnel " + strconv.Itoa(int(forwarder.TunnelID)) + " of length " + strconv.Itoa(len(data[5:])))
+			lastPeer.ReceivingSeqNum = seqNum + 1
+			lastPeer.DHPublicKey = data[5:]
 			storage.BroadcastNotifyGroup(notifyGroups, strconv.Itoa(int(forwarder.TunnelID)))
 			return
 		} else {
-			// TODO we're a tunnel initiator and just got a message from the tunnel => decrypt and handle
+			// TODO we're a tunnel initiator and just got a message from the tunnel => decrypt and send to API
 		}
 	case storage.TUNNEL_TYPE_HOP_OR_DESTINATION:
 		// we had our key exchange and now we find out whether we're the last hop or an intermediate
 		// decrypt
-		msg, err := decryptAndCheckSeqNum(forwarder, forwarderIdentifier, data)
+		msg, err := decryptAndCheckSeqNum(forwarder, forwarderIdentifier, data[4:])
 		if err != nil {
 			logger.Error.Println("Could not decrypt message from peer or sequence number invalid " + forwarderIdentifier)
 			return
@@ -233,6 +268,7 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			onionPort := binary.BigEndian.Uint16(msg[ipEnd : ipEnd+2])
 			encryptedNonce := msg[ipEnd+2:]
 			nextHopAddress := peerAddressToString(peerAddress, peerAddressIsIPv6, onionPort)
+			logger.Info.Println("Got EXTEND message with data: peerAddressIsIPv6: " + strconv.FormatBool(peerAddressIsIPv6) + ", peerAddress: " + peerAddress.String() + ", onionPort: " + strconv.Itoa(int(onionPort)))
 			// store this peer as our next hop
 			tPort, err := generateAndClaimUnusedTPort(nextHopAddress)
 			if err != nil {
@@ -246,6 +282,7 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			newForwarderIdentifier := getPeerIdentifier(nextHopAddress, tPort)
 			// since we're working with pointers we should now just have a second entry pointing to the same forwarder
 			storage.SetForwarder(forwarders, newForwarderIdentifier, forwarder)
+			logger.Info.Println("Created new forwarder with identifier " + newForwarderIdentifier)
 			// create KEYXCHG message and send it to the peer given
 			msgBuf := make([]byte, 5)
 			binary.BigEndian.PutUint32(msgBuf[0:4], 0)
@@ -259,27 +296,52 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			return
 		case MSG_COMPLETE:
 			forwarder.TType = storage.TUNNEL_TYPE_DESTINATION
-			// TODO
+			// TODO Notify API connections
 		default:
 			logger.Error.Println("Got unexpected message type, expecting EXTEND or COMPLETE: " + strconv.Itoa(int(msg[0])))
 			return
 		}
 	case storage.TUNNEL_TYPE_HOP:
-		decryptedMsg, err := decryptAndCheckSeqNum(forwarder, forwarderIdentifier, data[4:])
-		if err != nil {
-			logger.Error.Println("Could not decrypt message or sequence number invalid from peer " + forwarderIdentifier)
-			return
-		}
-		switch decryptedMsg[0] {
-		case MSG_FORWARD:
-			// send forward or backwards?
-			sendForward := forwarder.NextHop.TPort == tPort
-			if sendForward {
-				// peel onion layer, add our tPort and send along
-				
+		// send forward or backwards?
+		matchesPrevious := (forwarder.PreviousHop.Address == peerAddressString) && (forwarder.PreviousHop.TPort == tPort)
+		matchesNext := (forwarder.NextHop.Address == peerAddressString) && (forwarder.NextHop.TPort == tPort)
+		if matchesPrevious {
+			// send forward
+			decryptedMsg, err := decryptAndCheckSeqNum(forwarder, forwarderIdentifier, data[4:])
+			if err != nil {
+				logger.Error.Println("Could not decrypt message or sequence number invalid from peer " + forwarderIdentifier)
+				return
 			}
-		default:
-			logger.Error.Println("Got non-forward message as hop from " + forwarderIdentifier)
+			switch decryptedMsg[0] {
+			case MSG_FORWARD:
+				// add our tPort and send along to next hop
+				logger.Info.Println("Sending forwards in tunnel data from " + forwarderIdentifier + " (initial length" + strconv.Itoa(len(data[4:])) + ") of length " + strconv.Itoa(len(decryptedMsg)))
+				err := sendMessage(forwarder, true, decryptedMsg)
+				if err != nil {
+					logger.Error.Println("Could not forward data from " + forwarderIdentifier)
+					return
+				}
+				return
+			default:
+				logger.Error.Println("Got non-forward message as hop from " + forwarderIdentifier)
+				return
+			}
+		} else if matchesNext {
+			// put our own layer around it, add tPort and send to previous hop
+			encryptedMsg, err := encryptAndAddSeqNum(forwarder, forwarderIdentifier, data[4:])
+			if err != nil {
+				logger.Error.Println("Could not encrypt message from " + forwarderIdentifier)
+				return
+			}
+			logger.Info.Println("Sending backwards in tunnel data from " + forwarderIdentifier + " (initial length " + strconv.Itoa(len(data[4:])) + ") of length " + strconv.Itoa(len(encryptedMsg)))
+			err = sendMessage(forwarder, false, encryptedMsg)
+			if err != nil {
+				logger.Error.Println("Could not send data from " + forwarderIdentifier + " backwards through tunnel")
+				return
+			}
+			return
+		} else {
+			logger.Error.Println("Incoming packet matches neither previous nor next hop (from " + forwarderIdentifier + ")")
 			return
 		}
 	case storage.TUNNEL_TYPE_DESTINATION:
@@ -289,9 +351,9 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 
 func ipLength(addressIsIPv6 bool) int {
 	if addressIsIPv6 {
-		return net.IPv4len
-	} else {
 		return net.IPv6len
+	} else {
+		return net.IPv4len
 	}
 }
 
@@ -307,6 +369,7 @@ func sendMessage(forwarder *storage.Forwarder, sendForward bool, data []byte) er
 	msgBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(msgBuf[0:4], hop.TPort)
 	msgBuf = append(msgBuf, data...)
+	logger.Info.Println("Sending packet with TPort " + strconv.Itoa(int(hop.TPort)) + " to address " + hop.Address)
 	err := hoplayer.SendPacket(udpconn, hop.Address, msgBuf)
 	if err != nil {
 		logger.Error.Println("Could not send message to " + hop.Address)
@@ -316,26 +379,30 @@ func sendMessage(forwarder *storage.Forwarder, sendForward bool, data []byte) er
 }
 
 // sendIntoTunnel expects a message like [msgType, data...]
-func sendIntoTunnel(tunnelID uint32, data []byte) error {
+func sendIntoTunnel(tunnelID uint32, data []byte, skipLast bool) error {
 	tunnel, exists := storage.GetTunnel(tunnels, tunnelID)
 	if !exists {
 		logger.Error.Println("Could not find tunnel to send packet into")
 		return errors.New("ArgumentError")
 	}
-
 	// wrap message once for each hop (in reverse order)
 	msgBuf := data
 	for cur := tunnel.Peers.Back(); cur != nil; cur = cur.Prev() {
+		if skipLast && cur.Next() == nil {
+			continue
+		}
 		curHop, typeCheck := cur.Value.(*storage.OnionPeer)
 		if !typeCheck {
 			logger.Error.Println("Got object of wrong type from peer list")
 			return errors.New("InternalError")
 		}
 		// header
-		curHeaderBuf := make([]byte, 5)
+		curHeaderBuf := make([]byte, 4)
 		binary.BigEndian.PutUint32(curHeaderBuf[:4], curHop.SendingSeqNum)
 		curHop.SendingSeqNum++
-		curHeaderBuf[4] = MSG_FORWARD
+		if !(cur.Next() == nil || (skipLast && cur.Next().Next() == nil)) {
+			curHeaderBuf = append(curHeaderBuf, MSG_FORWARD)
+		}
 		msgBuf = append(curHeaderBuf, msgBuf...)
 		var err error
 		msgBuf, err = encryption.Encrypt(curHop.SharedSecret, msgBuf)
@@ -475,25 +542,27 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 			curTunnel.TPort = tPortReverse
 			msgBuf := make([]byte, 5)
 			binary.BigEndian.PutUint32(msgBuf[0:4], curPeer.SendingSeqNum)
+			curPeer.SendingSeqNum++
 			msgBuf[4] = MSG_KEYXCHG
 			msgBuf = append(msgBuf, encryptedNonce...)
 			sourceForwarder.NextHop = &storage.Hop{
 				TPort:   tPortReverse,
 				Address: peerAddressString,
 			}
-			storage.SetForwarder(forwarders, getPeerIdentifier(peerAddressString, tPortReverse), sourceForwarder)
+			forwarderIdentifier := getPeerIdentifier(peerAddressString, tPortReverse)
+			storage.SetForwarder(forwarders, forwarderIdentifier, sourceForwarder)
+			logger.Info.Println("Created new forwarder with identifier " + forwarderIdentifier)
 			err = sendMessage(sourceForwarder, true, msgBuf)
 			if err != nil {
 				logger.Warning.Println("Could not send DH keyexchange to peer " + peerAddressString)
 				continue
 			}
 		} else {
-			// TODO extend tunnel
 			var peerAddressIsIPv6Byte byte
 			if peerAddressIsIPv6 {
-				peerAddressIsIPv6Byte = 0
-			} else {
 				peerAddressIsIPv6Byte = 1
+			} else {
+				peerAddressIsIPv6Byte = 0
 			}
 			onionPortBytes := make([]byte, 2)
 			binary.BigEndian.PutUint16(onionPortBytes, peerOnionPort)
@@ -508,7 +577,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 			}
 			msgBuf = append(msgBuf, onionPortBytes...)
 			msgBuf = append(msgBuf, encryptedNonce...)
-			err = sendIntoTunnel(tunnelID, msgBuf)
+			err = sendIntoTunnel(tunnelID, msgBuf, true)
 			if err != nil {
 				logger.Warning.Println("Could not send extend message to peer " + peerAddressString)
 				continue

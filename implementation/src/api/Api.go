@@ -116,6 +116,6 @@ func RPSQuery() (err error, peerAddress net.IP, peerAddressIsIPv6 bool, peerOnio
 		logger.Error.Println("Could not parse peer public key from RPS response")
 		return errors.New("internalError"), nil, false, 0, nil
 	}
-	logger.Info.Println("RPS peer solicited with IP " + peerAddress.String() + " and port " + strconv.Itoa(int(peerOnionPort)))
+	logger.Info.Println("RPS peer solicited with IPv6 " + strconv.FormatBool(peerAddressIsIPv6) + " IP " + peerAddress.String() + " and port " + strconv.Itoa(int(peerOnionPort)))
 	return nil, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey
 }
