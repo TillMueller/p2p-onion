@@ -1,11 +1,12 @@
 package hoplayer
 
 import (
+	"net"
 	"testing"
 	"time"
 )
 
-func callbackDummyPeer1(data []byte) {}
+func callbackDummyPeer1(addr *net.UDPAddr, data []byte) {}
 
 func TestDiffieHellmanExchangePeer1(t *testing.T) {
 	udpconn, err := SetPacketReceiver("localhost:65502", callbackDummyPeer1)

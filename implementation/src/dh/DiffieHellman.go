@@ -38,8 +38,8 @@ func DeriveSharedSecret(privateKeyBytes []byte, publicKeyBytes []byte) ([]byte, 
 		return nil, errors.New("internalError")
 	}
 
-	sharedSecret, error := openssl.DeriveSharedSecret(privateKey, publicKey)
-	if error != nil {
+	sharedSecret, err := openssl.DeriveSharedSecret(privateKey, publicKey)
+	if err != nil {
 		logger.Error.Println("Could not derive shared secret")
 		return nil, errors.New("internalError")
 	}

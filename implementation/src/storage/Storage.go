@@ -196,6 +196,7 @@ type Forwarder struct {
 	NextHop         *Hop
 	PreviousHop     *Hop
 	TType           TunnelType
+	TunnelID        uint32
 	ReceivingSeqNum uint32
 	SendingSeqNum   uint32
 	DHPublicKey     []byte
@@ -244,6 +245,7 @@ type Hop struct {
 type Tunnel struct {
 	Peers       *list.List
 	Destination *OnionPeer
+	TPort       uint32
 }
 
 type OnionPeer struct {

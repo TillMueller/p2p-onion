@@ -65,7 +65,7 @@ func RPSQuery() (err error, peerAddress net.IP, peerAddressIsIPv6 bool, peerOnio
 	logger.Info.Println("Soliciting random peer")
 	conn, err := net.Dial("tcp", config.RpsAddress)
 	if err != nil {
-		logger.Error.Println("Could not connect to RPS module at " + config.RpsAddress)
+		logger.Error.Println("Could not connect to RPS module at " + config.RpsAddress + " (error: " + err.Error() + ")")
 		return errors.New("networkError"), nil, false, 0, nil
 	}
 	defer conn.Close()
