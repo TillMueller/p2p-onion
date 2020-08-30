@@ -34,6 +34,7 @@ const (
 	// TODO send destroy message to initiator if no connection and destination wants this tunnel
 	// 	initiator then removes the tunnel as if someone sent TUNNEL DESTROY to it
 	MSG_DESTROY		uint8 = 0x07
+	MSG_KEEPALIVE	uint8 = 0x08
 
 	LOCAL_FORWARDER string = "_localhost_"
 )

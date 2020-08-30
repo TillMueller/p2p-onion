@@ -23,9 +23,9 @@ var (
 	P2p_port          int
 	P2p_hostname      string
 	Intermediate_hops int
-	Hostkey           []byte
 	PrivateKey        *rsa.PrivateKey
 	RpsAddress        string
+	ApiAddress        string
 )
 
 // TODO add logfile location to config
@@ -75,5 +75,6 @@ func loadConfig(path string) error {
 		return errors.New("ConfigurationError")
 	}
 	RpsAddress = config.Section("rps").Key("api_address").MustString("")
+	ApiAddress = config.Section("onion").Key("api_address").MustString("")
 	return nil
 }

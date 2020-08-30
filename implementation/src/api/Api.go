@@ -1,4 +1,4 @@
-package sendingapi
+package api
 
 import (
 	"crypto/rsa"
@@ -9,7 +9,6 @@ import (
 	"net"
 	"onion/config"
 	"onion/logger"
-	"onion/onioninterface"
 	"onion/storage"
 	"strconv"
 )
@@ -32,6 +31,11 @@ const (
 )
 
 var apiConnections = storage.InitApiConnections()
+var onionLayerHandler func(net.Conn, uint16, []byte) error
+
+func RegisterOnionLayerHandler(callback func(net.Conn, uint16, []byte) error) {
+	onionLayerHandler = callback
+}
 
 func sendApiErrorMessage(conn net.Conn, requestType uint16, tunnelID uint32) {
 	msgBuf := make([]byte, 8)
@@ -45,21 +49,14 @@ func sendApiErrorMessage(conn net.Conn, requestType uint16, tunnelID uint32) {
 }
 
 func handleApiMessage(conn net.Conn, msgType uint16, msgBuf []byte) {
-	switch msgType {
-	case ONION_TUNNEL_DATA:
-		tunnelID := binary.BigEndian.Uint32(msgBuf[:4])
-		data := msgBuf[4:]
-		err := packagecommunicator.OnionLayerSendData(tunnelID, data)
-		if err != nil {
-			logger.Error.Println("Could not send data as requested by ONION_TUNNEL_DATA command")
-			sendApiErrorMessage(conn, msgType, tunnelID)
-		}
-	default:
-		// TODO disconnect this API connection
+	err := onionLayerHandler(conn, ONION_TUNNEL_DATA, msgBuf)
+	if err != nil {
+		logger.Error.Println("Could not handle API request")
 	}
 }
 
 func handleApiConnection(conn net.Conn) {
+	logger.Info.Println("New API connection from " + conn.RemoteAddr().String())
 	apiConn := &storage.ApiConnection{
 		Connection: conn,
 	}
@@ -71,7 +68,7 @@ func handleApiConnection(conn net.Conn) {
 			continue
 		}
 		go handleApiMessage(conn, msgType, msgBuf)
-		// TODO read from this sendingapi connection
+		// TODO read from this api connection
 		// TODO come up with a way to kill these API connections
 	}
 }

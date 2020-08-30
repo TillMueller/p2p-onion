@@ -4,6 +4,8 @@ import (
 	"container/list"
 	"crypto/rsa"
 	"errors"
+	"net"
+	"onion/logger"
 	"sync"
 	"time"
 )
@@ -430,4 +432,46 @@ func CleanupNotifyGroup(notifyGroupsMap *NotifyGroups, key string) {
 		}
 	}
 	notifyGroupsMap.mutex.Unlock()
+}
+
+type ApiConnection struct {
+	Connection net.Conn
+}
+
+type ApiConnections struct {
+	data  *list.List
+	mutex sync.Mutex
+}
+
+func InitApiConnections() *ApiConnections {
+	return &ApiConnections{
+		data:  list.New(),
+	}
+}
+
+func AddApiConnection(apiConnectionMap *ApiConnections, value *ApiConnection) {
+	apiConnectionMap.mutex.Lock()
+	apiConnectionMap.data.PushBack(value)
+	apiConnectionMap.mutex.Unlock()
+}
+
+func RemoveApiConnection(apiConnectionMap *ApiConnections, key uint32) {
+	// TODO
+}
+
+func SendAllApiConnections(apiConnectionMap *ApiConnections, data []byte) {
+	apiConnectionMap.mutex.Lock()
+	for cur := apiConnectionMap.data.Front(); cur != nil; cur = cur.Next() {
+		apiConn, typeCheck := cur.Value.(*ApiConnection)
+		if !typeCheck {
+			logger.Warning.Println("Got wrong type from API connections list")
+			continue
+		}
+		n, err := apiConn.Connection.Write(data)
+		if err != nil || n != len(data) {
+			logger.Warning.Println("Could not send API message to connection " + apiConn.Connection.RemoteAddr().String())
+			continue
+		}
+	}
+	apiConnectionMap.mutex.Unlock()
 }

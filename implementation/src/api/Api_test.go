@@ -1,4 +1,4 @@
-package sendingapi
+package api
 
 import (
 	"bytes"
