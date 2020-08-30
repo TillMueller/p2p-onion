@@ -21,8 +21,9 @@ import (
 const (
 	// TODO move timeout to config?
 	// timeout
-	RESP_TIMEOUT  = 5 * time.Second
-	PUBKEY_LENGTH = 178
+	RESP_TIMEOUT              = 5 * time.Second
+	TUNNEL_INACTIVITY_TIMEOUT = 10 * time.Second
+	PUBKEY_LENGTH             = 178
 
 	MSG_KEYXCHG     uint8 = 0x00
 	MSG_KEYXCHGRESP uint8 = 0x01
@@ -33,8 +34,8 @@ const (
 	MSG_DATA        uint8 = 0x06
 	// TODO send destroy message to initiator if no connection and destination wants this tunnel
 	// 	initiator then removes the tunnel as if someone sent TUNNEL DESTROY to it
-	MSG_DESTROY		uint8 = 0x07
-	MSG_KEEPALIVE	uint8 = 0x08
+	MSG_DESTROY   uint8 = 0x07
+	MSG_KEEPALIVE uint8 = 0x08
 
 	LOCAL_FORWARDER string = "_localhost_"
 )
@@ -111,6 +112,35 @@ func peerAddressToString(address net.IP, addressIsIPv6 bool, port uint16) string
 
 func getPeerIdentifier(peerAddress string, tunnelID uint32) (identifier string) {
 	return peerAddress + ":" + strconv.Itoa(int(tunnelID))
+}
+
+func watchForwarder(forwarder *storage.Forwarder) {
+	removeForwarder := false
+	for {
+		if removeForwarder {
+			// TODO remove the tunnel and potential TPorts that belong to this forwarder
+			var hop *storage.Hop
+			if forwarder.TType == storage.TUNNEL_TYPE_INITIATOR {
+				hop = forwarder.NextHop
+			} else {
+				hop = forwarder.PreviousHop
+			}
+			forwarderIdentifier := getPeerIdentifier(hop.Address, hop.TPort)
+			logger.Info.Println("Removing watcher and forwarder for " + forwarderIdentifier)
+			storage.DeleteForwarder(forwarders, forwarderIdentifier)
+			break
+		}
+		// check if last message has been too long ago
+		timeSinceLastMsg := time.Now().Sub(forwarder.LastMessageTime)
+		if timeSinceLastMsg > TUNNEL_INACTIVITY_TIMEOUT {
+			logger.Warning.Println("Tunnel timed out after " + strconv.FormatFloat(timeSinceLastMsg.Seconds(), 'g', 0, 64) + " seconds")
+			removeForwarder = true
+		}
+		// check if it has been requested to remove this forwarder
+		if forwarder.RemoveForwarder {
+			removeForwarder = true
+		}
+	}
 }
 
 func encryptAndAddSeqNum(forwarder *storage.Forwarder, forwarderIdentifier string, data []byte) ([]byte, error) {
@@ -194,9 +224,12 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			DHPublicKey:     peerPublicKey,
 			DHPrivateKey:    privateKey,
 			SharedSecret:    sharedSecret,
+			LastMessageTime: time.Now(),
+			RemoveForwarder: false,
 		}
 		storage.SetForwarder(forwarders, forwarderIdentifier, newForwarder)
 		logger.Info.Println("Created new forwarder with identifier " + forwarderIdentifier)
+		go watchForwarder(forwarder)
 		// generate KEYXCHGRESP
 		respBuf := make([]byte, 5)
 		binary.BigEndian.PutUint32(respBuf[0:4], newForwarder.SendingSeqNum)
@@ -210,6 +243,8 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		}
 		return
 	}
+	// update forwarders last message time
+	forwarder.LastMessageTime = time.Now()
 	// check forwarder type, this could be a KEYXCHGRESP
 	switch forwarder.TType {
 	case storage.TUNNEL_TYPE_INITIATOR:
@@ -584,6 +619,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 		PreviousHop: nil,
 		TType:       storage.TUNNEL_TYPE_INITIATOR,
 		TunnelID:    tunnelID,
+		RemoveForwarder: false,
 	}
 	curTunnel := &storage.Tunnel{
 		Peers:     list.New(),
@@ -755,6 +791,9 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 		logger.Error.Println("Did not receive COMPLETE message in time, assuming tunnel is broken")
 		return 0, errors.New("TunnelError")
 	}
+	sourceForwarder.LastMessageTime = time.Now()
+	go watchForwarder(sourceForwarder)
+	// TODO start keepalive sending routine
 	// TODO notify API that tunnel is ready
 	logger.Info.Println("Tunnel with ID " + strconv.Itoa(int(tunnelID)) + " built successfully")
 	return tunnelID, nil

@@ -204,6 +204,8 @@ type Forwarder struct {
 	DHPublicKey     []byte
 	DHPrivateKey    []byte
 	SharedSecret    []byte
+	LastMessageTime time.Time
+	RemoveForwarder bool
 }
 
 type forwarders struct {
@@ -445,7 +447,7 @@ type ApiConnections struct {
 
 func InitApiConnections() *ApiConnections {
 	return &ApiConnections{
-		data:  list.New(),
+		data: list.New(),
 	}
 }
 
@@ -455,8 +457,20 @@ func AddApiConnection(apiConnectionMap *ApiConnections, value *ApiConnection) {
 	apiConnectionMap.mutex.Unlock()
 }
 
-func RemoveApiConnection(apiConnectionMap *ApiConnections, key uint32) {
-	// TODO
+func RemoveApiConnection(apiConnectionMap *ApiConnections, value *ApiConnection) {
+	apiConnectionMap.mutex.Lock()
+	for cur := apiConnectionMap.data.Front(); cur != nil; cur = cur.Next() {
+		apiConn, typeCheck := cur.Value.(*ApiConnection)
+		if !typeCheck {
+			logger.Warning.Println("Got wrong type from API connections list")
+			continue
+		}
+		if apiConn == value {
+			apiConnectionMap.data.Remove(cur)
+			break
+		}
+	}
+	apiConnectionMap.mutex.Unlock()
 }
 
 func SendAllApiConnections(apiConnectionMap *ApiConnections, data []byte) {
