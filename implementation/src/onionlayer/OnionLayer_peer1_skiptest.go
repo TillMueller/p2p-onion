@@ -228,5 +228,11 @@ func TestBuildTunnelSingleHopPeer1(t *testing.T) {
 		t.Errorf("BuildTunnel error'd out")
 		return
 	}
-	t.Log("TESTING: BUILT TUNNEL WITHOUT ERROR: " + strconv.Itoa(int(tunnelID)))
+	t.Log("TESTING: Built tunnel without error: " + strconv.Itoa(int(tunnelID)))
+	err = SendData(tunnelID, []byte("This is a message!"))
+	if err != nil {
+		t.Errorf("SendData error'd out")
+		return
+	}
+	t.Log("TESTING: Successfully sent data through tunnel")
 }

@@ -243,10 +243,11 @@ type Hop struct {
 }
 
 type Tunnel struct {
-	Peers       *list.List
-	Destination *OnionPeer
-	TPort       uint32
-	Completed	bool
+	Peers               *list.List
+	Destination         *OnionPeer
+	Completed           bool
+	Initiator           bool
+	ForwarderIdentifier string
 }
 
 type OnionPeer struct {
