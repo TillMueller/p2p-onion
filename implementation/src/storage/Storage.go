@@ -246,6 +246,7 @@ type Tunnel struct {
 	Peers       *list.List
 	Destination *OnionPeer
 	TPort       uint32
+	Completed	bool
 }
 
 type OnionPeer struct {
@@ -391,7 +392,7 @@ func WaitForNotifyGroup(notifyGroupsMap *NotifyGroups, key string, timeout time.
 			select {
 			case <-value.lock:
 				break
-			case <-time.After(timeout * time.Second):
+			case <-time.After(timeout):
 				break
 			}
 		} else {

@@ -10,7 +10,6 @@ import (
 )
 
 func TestBuildTunnelSingleHopPeer2(t *testing.T) {
-	config.Intermediate_hops = 1
 	config.P2p_hostname = "localhost"
 	config.P2p_port = 65505
 	keyFileContent, _ := ioutil.ReadFile("peer2_testing.pem")
