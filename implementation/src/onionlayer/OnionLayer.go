@@ -31,11 +31,15 @@ const (
 	MSG_COMPLETED   uint8 = 0x04
 	MSG_FORWARD     uint8 = 0x05
 	MSG_DATA        uint8 = 0x06
+	// TODO send destroy message to initiator if no connection and destination wants this tunnel
+	// 	initiator then removes the tunnel as if someone sent TUNNEL DESTROY to it
+	MSG_DESTROY		uint8 = 0x07
 
 	LOCAL_FORWARDER string = "_localhost_"
 )
 
 // TODO create cleanup function that e.g. closes the UDP connection when the program exits
+// TODO if we ever get an unexpected message from a peer, send a reset and forget that peer / disconnect it (can we get tunnels etc. by peer address?)
 
 var tunnels = storage.InitTunnels()
 var notifyGroups = storage.InitNotifyGroups()
@@ -45,15 +49,33 @@ var forwarders = storage.InitForwarders()
 var peerTPorts = storage.InitPeerTPorts()
 var udpconn *net.UDPConn
 
-func initialize() {
+func handleAPIRequest(conn net.Conn, msgType uint16, data []byte) error {
+	switch msgType {
+	case api.ONION_TUNNEL_DATA:
+		tunnelID := binary.BigEndian.Uint32(data[:4])
+		err := sendData(tunnelID, data[4:])
+		if err != nil {
+			logger.Error.Println("Could not send data into tunnel " + strconv.Itoa(int(tunnelID)) + " as requested by API")
+			return errors.New("OnionError")
+		}
+	default:
+		logger.Error.Println("Got unknown API message type: " + strconv.Itoa(int(msgType)) + " from " + conn.RemoteAddr().String())
+		return errors.New("ArgumentError")
+	}
+	return nil
+}
+
+func Initialize() error {
 	listeningAddress := config.P2p_hostname + ":" + strconv.Itoa(config.P2p_port)
 	var err error
 	udpconn, err = hoplayer.SetPacketReceiver(listeningAddress, handleIncomingPacket)
 	if err != nil {
 		logger.Error.Println("Could not set packet receiver")
-		return
+		return errors.New("NetworkError")
 	}
+	api.RegisterOnionLayerHandler(handleAPIRequest)
 	logger.Info.Println("OnionLayer has been initialized")
+	return nil
 }
 
 // generate a random 32 bit unsigned integer from the crypto/rand pseudo random number generator
@@ -199,7 +221,7 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		data = data[4:]
 		if tunnel.Peers.Len() != 1 {
 			// decrypt all but the last hop since it might not be encrypted if it is a KEYXCHGRESP
-			for cur := tunnel.Peers.Front(); cur.Next() != nil; cur = cur.Next() {
+			for cur := tunnel.Peers.Front(); cur != nil && cur.Next() != nil; cur = cur.Next() {
 				curPeer, typeCheck := cur.Value.(*storage.OnionPeer)
 				if !typeCheck {
 					logger.Error.Println("Got wrong type from peers list; message from " + forwarderIdentifier)
@@ -273,6 +295,7 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 				tunnel.Completed = true
 				storage.BroadcastNotifyGroup(notifyGroups, tunnelIDString)
 			case MSG_DATA:
+				logger.Info.Println("Got DATA as initiator: " + string(decryptedMsg[1:]))
 				// TODO send data to API
 			default:
 				logger.Warning.Println("Got wrong message type from tunnel " + strconv.Itoa(int(forwarder.TunnelID)) +
@@ -353,7 +376,14 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 				logger.Error.Println("Could not send COMPLETED message")
 				return
 			}
-			// TODO Notify API connections (ONION TUNNEL INCOMING)
+			tunnelIDBuf := make([]byte, 4)
+			binary.BigEndian.PutUint32(tunnelIDBuf, tunnelID)
+			logger.Info.Println("Broadcasting new tunnel with ID " + strconv.Itoa(int(tunnelID)) + " to all API connections")
+			err = api.SendAllAPIConnections(api.ONION_TUNNEL_INCOMING, tunnelIDBuf)
+			if err != nil {
+				logger.Error.Println("Could not send API message to all connections for ONION_TUNNEL_INCOMING")
+				return
+			}
 		default:
 			logger.Error.Println("Got unexpected message type, expecting EXTEND or COMPLETE: " + strconv.Itoa(int(msg[0])))
 			return
@@ -729,7 +759,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 	return tunnelID, nil
 }
 
-func SendData(tunnelID uint32, data []byte) error {
+func sendData(tunnelID uint32, data []byte) error {
 	tunnel, exists := storage.GetTunnel(tunnels, tunnelID)
 	if !exists {
 		logger.Error.Println("Could not get tunnel by ID " + strconv.Itoa(int(tunnelID)))
@@ -766,3 +796,4 @@ func SendData(tunnelID uint32, data []byte) error {
 }
 
 // func destroyTunnel()
+// TODO

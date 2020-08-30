@@ -15,6 +15,6 @@ func TestBuildTunnelSingleHopPeer3(t *testing.T) {
 	keyFileContent, _ := ioutil.ReadFile("peer3_testing.pem")
 	privateKeyPem, _ := pem.Decode(keyFileContent)
 	config.PrivateKey, _ = x509.ParsePKCS1PrivateKey(privateKeyPem.Bytes)
-	initialize()
+	Initialize()
 	time.Sleep(5 * time.Second)
 }

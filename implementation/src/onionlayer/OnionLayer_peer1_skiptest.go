@@ -220,7 +220,7 @@ func TestBuildTunnelSingleHopPeer1(t *testing.T) {
 	config.P2p_port = 65504
 	config.RpsAddress = "localhost:65530"
 	go serveRPS(t)
-	initialize()
+	Initialize()
 	time.Sleep(1 * time.Second)
 	publicKey, _ := x509.ParsePKCS1PublicKey(destinationPublicKeyRaw)
 	tunnelID, err := BuildTunnel(net.IPv4(127, 0, 0, 1), false, 65508, publicKey)
@@ -229,10 +229,11 @@ func TestBuildTunnelSingleHopPeer1(t *testing.T) {
 		return
 	}
 	t.Log("TESTING: Built tunnel without error: " + strconv.Itoa(int(tunnelID)))
-	err = SendData(tunnelID, []byte("This is a message!"))
+	err = sendData(tunnelID, []byte("This is a message!"))
 	if err != nil {
 		t.Errorf("SendData error'd out")
 		return
 	}
 	t.Log("TESTING: Successfully sent data through tunnel")
+	time.Sleep(5 * time.Second)
 }
