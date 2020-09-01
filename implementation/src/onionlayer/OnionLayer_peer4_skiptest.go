@@ -16,5 +16,5 @@ func TestBuildTunnelSingleHopPeer4(t *testing.T) {
 	privateKeyPem, _ := pem.Decode(keyFileContent)
 	config.PrivateKey, _ = x509.ParsePKCS1PrivateKey(privateKeyPem.Bytes)
 	Initialize()
-	time.Sleep(5 * time.Second)
+	time.Sleep(15 * time.Second)
 }

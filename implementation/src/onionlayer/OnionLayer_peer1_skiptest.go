@@ -229,11 +229,19 @@ func TestBuildTunnelSingleHopPeer1(t *testing.T) {
 		return
 	}
 	t.Log("TESTING: Built tunnel without error: " + strconv.Itoa(int(tunnelID)))
+	time.Sleep(2 * time.Second)
 	err = sendData(tunnelID, []byte("This is a message!"))
 	if err != nil {
 		t.Errorf("SendData error'd out")
 		return
 	}
 	t.Log("TESTING: Successfully sent data through tunnel")
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
+	err = destroyTunnel(tunnelID)
+	if err != nil {
+		t.Errorf("destroyTunnel error'd out")
+		return
+	}
+	t.Log("TESTING: Destroyed tunnel successfully")
+	time.Sleep(15 * time.Second)
 }

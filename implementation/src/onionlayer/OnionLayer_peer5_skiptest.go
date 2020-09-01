@@ -59,5 +59,5 @@ func TestBuildTunnelSingleHopPeer5(t *testing.T) {
 		return
 	}
 	go connectToApi(t)
-	time.Sleep(5 * time.Second)
+	time.Sleep(15 * time.Second)
 }

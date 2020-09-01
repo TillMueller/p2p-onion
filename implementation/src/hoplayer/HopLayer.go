@@ -112,7 +112,6 @@ func listen(udpconn *net.UDPConn, callback func(*net.UDPAddr, []byte)) {
 				continue
 			}
 			logger.Warning.Println("Got packet with wrong size from peer: " + addrString)
-			// TODO also clear this peer's information on the onion layer (non-blocking)
 			go clearPeerInformation(addrString)
 			continue
 		}
@@ -223,7 +222,7 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 		logger.Warning.Println("Received packet with repeated sequence number (" + strconv.Itoa(receivedSeqNum) + ") from peer: " + addrStr)
 		return
 	}
-	if receivedSeqNum != curSeqNum {
+	if receivedSeqNum > curSeqNum {
 		logger.Info.Println("Some sequence numbers were missed, possibly due to lost packets. Expected sequence number: " + strconv.Itoa(curSeqNum) + "; received sequence number: " + strconv.Itoa(receivedSeqNum))
 	}
 	storage.SetSequenceNumbersValue(receivingSeqNums, addrStr, receivedSeqNum+1)
