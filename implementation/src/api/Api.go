@@ -31,9 +31,9 @@ const (
 )
 
 var apiConnections = storage.InitApiConnections()
-var onionLayerHandler func(net.Conn, uint16, []byte) error
+var onionLayerHandler func(net.Conn, uint16, []byte) (uint32, error)
 
-func RegisterOnionLayerHandler(callback func(net.Conn, uint16, []byte) error) {
+func RegisterOnionLayerHandler(callback func(net.Conn, uint16, []byte) (uint32, error)) {
 	onionLayerHandler = callback
 }
 
@@ -49,9 +49,10 @@ func sendApiErrorMessage(conn net.Conn, requestType uint16, tunnelID uint32) {
 }
 
 func handleApiMessage(conn net.Conn, msgType uint16, msgBuf []byte) {
-	err := onionLayerHandler(conn, ONION_TUNNEL_DATA, msgBuf)
+	tunnelID, err := onionLayerHandler(conn, msgType, msgBuf)
 	if err != nil {
-		logger.Error.Println("Could not handle API request")
+		logger.Error.Println("Could not handle API request from " + conn.RemoteAddr().String() + ", sending ONION_ERROR")
+		sendApiErrorMessage(conn, msgType, tunnelID)
 	}
 }
 
@@ -60,6 +61,7 @@ func handleApiConnection(conn net.Conn) {
 	apiConn := &storage.ApiConnection{
 		Connection: conn,
 	}
+	defer conn.Close()
 	storage.AddApiConnection(apiConnections, apiConn)
 	for {
 		msgType, msgBuf, err := ReceiveAPIMessage(conn)

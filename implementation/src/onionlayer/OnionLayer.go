@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"net"
@@ -59,20 +60,46 @@ var forwarders = storage.InitForwarders()
 var peerTPorts = storage.InitPeerTPorts()
 var udpconn *net.UDPConn
 
-func handleAPIRequest(conn net.Conn, msgType uint16, data []byte) error {
+func handleAPIRequest(conn net.Conn, msgType uint16, data []byte) (uint32, error) {
 	switch msgType {
+	case api.ONION_TUNNEL_BUILD:
+		logger.Info.Println("Got API request to build tunnel")
+		peerAddressIsIPv6 := data[1] == 0x1
+		onionPort := binary.BigEndian.Uint16(data[2:4])
+		ipAddressEnd := 4 + ipLength(peerAddressIsIPv6)
+		var peerAddress net.IP = data[4:ipAddressEnd]
+		peerHostkey, err := x509.ParsePKCS1PublicKey(data[ipAddressEnd:])
+		if err != nil {
+			logger.Error.Println("Could not parse peer public key from API ONION_TUNNEL_BUILD message")
+			return 0, errors.New("APIError")
+		}
+		tunnelID, err := BuildTunnel(peerAddress, peerAddressIsIPv6, onionPort, peerHostkey)
+		if err != nil {
+			logger.Error.Println("Could not build tunnel as requested by API")
+			return 0, errors.New("OnionError")
+		}
+		logger.Info.Println("API requested tunnel built successfully, ID " + strconv.Itoa(int(tunnelID)))
+		// send message to API
+		msgBuf := make([]byte, 4)
+		binary.BigEndian.PutUint32(msgBuf, tunnelID)
+		err = api.SendAPIMessage(conn, api.ONION_TUNNEL_READY, append(msgBuf, data[ipAddressEnd:]...))
+		if err != nil {
+			logger.Error.Println("Could not send ONION_TUNNEL_READY via API for newly built tunnel " + strconv.Itoa(int(tunnelID)))
+			return tunnelID, errors.New("APIError")
+		}
+		return tunnelID, nil
 	case api.ONION_TUNNEL_DATA:
 		tunnelID := binary.BigEndian.Uint32(data[:4])
 		err := sendData(tunnelID, data[4:])
 		if err != nil {
 			logger.Error.Println("Could not send data into tunnel " + strconv.Itoa(int(tunnelID)) + " as requested by API")
-			return errors.New("OnionError")
+			return tunnelID, errors.New("OnionError")
 		}
 	default:
 		logger.Error.Println("Got unknown API message type: " + strconv.Itoa(int(msgType)) + " from " + conn.RemoteAddr().String())
-		return errors.New("ArgumentError")
+		return 0, errors.New("ArgumentError")
 	}
-	return nil
+	return 0, nil
 }
 
 func Initialize() error {
