@@ -11,18 +11,19 @@ import (
 )
 
 type symmetricKeys struct {
-	data  map[string][]byte
-	mutex sync.Mutex
-	cond  *sync.Cond
+	data         map[string][]byte
+	mutex        sync.Mutex
+	notifyGroups *NotifyGroups
+	cond         *sync.Cond
 }
 
 // InitSymmetricKeysMap creates a new map for storage of symmetric keys, used for storing the keypair generated for a
 // Diffie-Hellman exchange. It also contains functionality to broadcast signals for routines waiting for new map values
 func InitSymmetricKeys() *symmetricKeys {
 	return &symmetricKeys{
-		data:  make(map[string][]byte),
-		mutex: sync.Mutex{},
-		cond:  sync.NewCond(&sync.Mutex{}),
+		data:         make(map[string][]byte),
+		mutex:        sync.Mutex{},
+		notifyGroups: InitNotifyGroups(),
 	}
 }
 
@@ -32,10 +33,9 @@ func SetSymmetricKeysValue(symmetricKeysMap *symmetricKeys, key string, value []
 	symmetricKeysMap.mutex.Unlock()
 }
 
-func BroadcastSymmetricKeys(symmetricKeysMap *symmetricKeys) {
-	symmetricKeysMap.cond.L.Lock()
-	symmetricKeysMap.cond.Broadcast()
-	symmetricKeysMap.cond.L.Unlock()
+func BroadcastSymmetricKeys(symmetricKeysMap *symmetricKeys, key string) {
+	BroadcastNotifyGroup(symmetricKeysMap.notifyGroups, key)
+	CleanupNotifyGroup(symmetricKeysMap.notifyGroups, key)
 }
 
 func DeleteSymmetricKeysValue(ksymmetricKeysMap *symmetricKeys, key string) {
@@ -54,23 +54,15 @@ func GetSymmetricKeysValue(symmetricKeysMap *symmetricKeys, key string) (value [
 	return value, exists
 }
 
-func WaitForSymmetricKeysValue(symmetricKeysMap *symmetricKeys, key string) (value []byte) {
-	// TODO if this works when multiple routines are waiting at the same time
-	// 	In the worst case the second one cannot aquire the cond.L.Lock() and has to wait for the first to get its values
-	// 	before being able to continue
-	// TODO replace this with the notifyGroup implementation below
-	symmetricKeysMap.cond.L.Lock()
-	for {
-		// this _should not_ be a deadlock
-		var exists bool
+func WaitForSymmetricKeysValue(symmetricKeysMap *symmetricKeys, key string, timeout time.Duration) (value []byte, exists bool) {
+	value, exists = GetSymmetricKeysValue(symmetricKeysMap, key)
+	if !exists {
+		WaitForNotifyGroup(symmetricKeysMap.notifyGroups, key, timeout)
 		value, exists = GetSymmetricKeysValue(symmetricKeysMap, key)
-		if exists {
-			break
-		}
-		symmetricKeysMap.cond.Wait()
+		return value, exists
+	} else {
+		return value, true
 	}
-	symmetricKeysMap.cond.L.Unlock()
-	return value
 }
 
 type KeyPair struct {

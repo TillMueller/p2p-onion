@@ -15,18 +15,20 @@ import (
 	"onion/logger"
 	"onion/storage"
 	"strconv"
+	"sync"
 	"time"
 )
 
 const (
 	// TODO move timeouts to config?
-	// timeout
 	RESP_TIMEOUT                 = 5 * time.Second
-	// if the latency between the tunnel initiator and destinion is > TUNNEL_INACTIVITY_TIMEOUT / 2 the tunnel will
+	// if the latency between the tunnel initiator and destination is > TUNNEL_INACTIVITY_TIMEOUT / 2 the tunnel will
 	// always fail. If you have high-latency connections increase this as required
 	TUNNEL_INACTIVITY_TIMEOUT    = 5 * time.Second
 	// defines how often a forwarder is checked for timeouts and how often KEEPALIVE messages are sent by the tunnel initiator
 	FORWARDER_KEEPALIVE_INTERVAL = time.Second
+	// how often do we try a new peer when building a tunnel before assuming that everything is broken and giving up
+	TUNNEL_BUILD_RETRY_COUNT = 5
 	PUBKEY_LENGTH                = 178
 
 	MSG_KEYXCHG     uint8 = 0x00
@@ -36,7 +38,7 @@ const (
 	MSG_COMPLETED   uint8 = 0x04
 	MSG_FORWARD     uint8 = 0x05
 	MSG_DATA        uint8 = 0x06
-	// TODO send destroy message to initiator if no connection and destination wants this tunnel
+	// TODO send destroy message to initiator if no connection at destination wants this tunnel
 	// 	initiator then removes the tunnel as if someone sent TUNNEL DESTROY to it
 	MSG_DESTROY       uint8 = 0x07
 	MSG_KEEPALIVE     uint8 = 0x08
@@ -46,7 +48,8 @@ const (
 )
 
 // TODO create cleanup function that e.g. closes the UDP connection when the program exits
-// TODO if we ever get an unexpected message from a peer, send a reset and forget that peer / disconnect it (can we get tunnels etc. by peer address?)
+
+var sendMutex sync.Mutex
 
 var tunnels = storage.InitTunnels()
 var notifyGroups = storage.InitNotifyGroups()
@@ -258,6 +261,10 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		logger.Info.Println("Created new forwarder with identifier " + forwarderIdentifier)
 		go watchForwarder(newForwarder, forwarderIdentifier)
 		// generate KEYXCHGRESP
+		logger.Info.Println("LOCKING sendMutex")
+		sendMutex.Lock()
+		defer sendMutex.Unlock()
+		defer logger.Info.Println("UNLOCKING sendMutex")
 		respBuf := make([]byte, 5)
 		binary.BigEndian.PutUint32(respBuf[0:4], newForwarder.SendingSeqNum)
 		newForwarder.SendingSeqNum++
@@ -358,6 +365,10 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 				tunnel.Completed = true
 				storage.BroadcastNotifyGroup(notifyGroups, tunnelIDString)
 			case MSG_DATA:
+				if !tunnel.Completed {
+					logger.Info.Println("Got DATA from incomplete tunnel, discarding")
+					return
+				}
 				// TODO send data to API
 				logger.Info.Println("Got DATA as initiator from tunnel with ID " + tunnelIDString)
 			case MSG_DESTROY:
@@ -407,6 +418,8 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			storage.SetForwarder(forwarders, newForwarderIdentifier, forwarder)
 			logger.Info.Println("Created new forwarder with identifier " + newForwarderIdentifier)
 			// create KEYXCHG message and send it to the peer given
+			sendMutex.Lock()
+			defer sendMutex.Unlock()
 			msgBuf := make([]byte, 5)
 			binary.BigEndian.PutUint32(msgBuf[0:4], 0)
 			msgBuf[4] = MSG_KEYXCHG
@@ -432,6 +445,8 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			}
 			storage.SetTunnel(tunnels, tunnelID, tunnel)
 			forwarder.TunnelID = tunnelID
+			sendMutex.Lock()
+			defer sendMutex.Unlock()
 			msgBuf, err := encryptAndAddSeqNum(forwarder, forwarderIdentifier, []byte{MSG_COMPLETED})
 			if err != nil {
 				logger.Error.Println("Could not encrypt COMPLETED message for forwarder " + forwarderIdentifier)
@@ -481,6 +496,8 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			}
 		} else if matchesNext {
 			// put our own layer around it, add tPort and send to previous hop
+			sendMutex.Lock()
+			defer sendMutex.Unlock()
 			encryptedMsg, err := encryptAndAddSeqNum(forwarder, forwarderIdentifier, data[4:])
 			if err != nil {
 				logger.Error.Println("Could not encrypt message from " + forwarderIdentifier)
@@ -562,6 +579,8 @@ func sendIntoTunnel(tunnelID uint32, data []byte, skipLast bool) error {
 		logger.Error.Println("Could not find tunnel to send packet into")
 		return errors.New("ArgumentError")
 	}
+	sendMutex.Lock()
+	defer sendMutex.Unlock()
 	// wrap message once for each hop (in reverse order)
 	msgBuf := data
 	for cur := tunnel.Peers.Back(); cur != nil; cur = cur.Prev() {
@@ -625,27 +644,10 @@ func sendIntoTunnel(tunnelID uint32, data []byte, skipLast bool) error {
 // [------------SequenceNumber------------]
 // [msgType||----------------data---------]
 // [--------------contd. data-------------]
-// message Types:
-//		- 0x00 KEYXCHG		Indicates that the message data contains a Diffie-Hellman nonce encrypted with the receiving hosts public key. Response of type KEYXCHGRESP expected.
-//		- 0x01 KEYXCHGRESP	Indicates that the message data contains a Diffie-Hellman nonce encrypted with the receiving hosts public key. May only be sent in response to KEYXCHG.
 // For every peer we store the following data:
 //		- a symmetric key used for encryption of onion layer messages
 //		- the TPort used to indentify this tunnel with the peer
-//		-
 func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPort uint16, finalHopHostKey *rsa.PublicKey) (tunnelID uint32, err error) {
-	// DONE
-	// - get the public key of the final hop -> We get this as part of the "ONION TUNNEL BUILD" message
-	// TODO
-	//		- get two peers to use as hops including their respective public keys and onion addresses / ports -> RPS gives us all this information
-	//		- generate diffie hellman nonce and encrypt it with the first hop's public key
-	//		- generate a tunnel ID to use towards the first hop and a tunnel ID to use towards the API
-	//		- send to first hop: tunnel ID, IP version / IP of next hop, encrypted DH nonce
-	//		- wait for response; if response does not happen within a certain timeframe (e.g. one second) we can either resend or choose a new hop
-	//		- derive ephemeral symmetric key for this hop
-	//		- do the same for the second and third hop
-	//		- enable keepalive messages (or is this already required before?)
-	//		- make API send message that tunnel creation was successful (what can we do in case of failure?)
-
 	tunnelID, err = generateAndClaimUnusedTPort(LOCAL_FORWARDER)
 	destinationPeerAddress := peerAddressToString(finalHopAddress, finalHopAddressIsIPv6, finalHopPort)
 
@@ -662,7 +664,17 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 		Initiator: true,
 	}
 	storage.SetTunnel(tunnels, tunnelID, curTunnel)
+	tunnelBuildCounter := 0
 	for curTunnel.Peers.Len() < config.Intermediate_hops+1 {
+		// To ensure that an intermediate hop going offline does not block our build function forever, we have a maximum
+		// amount of tries per new hop
+		// For every addition of a hop, we try TUNNEL_BUILD_RETRY_COUNT times to solicit a random peer and add it to the
+		// tunnel. When a peer is successfully added, we reset tunnelBuildCounter to zero
+		if tunnelBuildCounter == TUNNEL_BUILD_RETRY_COUNT {
+			logger.Warning.Println("Failed building tunnel, ran into TUNNEL_BUILD_RETRY_COUNT, aborting")
+			return 0, errors.New("NetworkError")
+		}
+		tunnelBuildCounter++
 		logger.Info.Println("Building tunnel (ID " + strconv.Itoa(int(tunnelID)) + "), got " + strconv.Itoa(curTunnel.Peers.Len()) + " of " + strconv.Itoa(config.Intermediate_hops) + " hops")
 		var peerAddress net.IP
 		var peerAddressIsIPv6 bool
@@ -801,6 +813,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 			continue
 		}
 		curPeer.SharedSecret = sharedSecret
+		tunnelBuildCounter = 0
 		logger.Info.Println("Successfully added peer " + peerAddressString + " to tunnel " + strconv.Itoa(int(tunnelID)))
 	}
 	destinationHop, typeCheck := curTunnel.Peers.Back().Value.(*storage.OnionPeer)
@@ -834,6 +847,8 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 }
 
 func sendBackwardsThroughTunnel(forwarder *storage.Forwarder, forwarderIdentifier string, data []byte) error {
+	sendMutex.Lock()
+	defer sendMutex.Unlock()
 	msgBuf, err := encryptAndAddSeqNum(forwarder, forwarderIdentifier, data)
 	if err != nil {
 		logger.Error.Println("Could not encrypt data for forwarder " + forwarderIdentifier)
@@ -881,7 +896,7 @@ func sendData(tunnelID uint32, data []byte) error {
 func destroyTunnel(tunnelID uint32) error {
 	tunnel, exists := storage.GetTunnel(tunnels, tunnelID)
 	tunnelIDString := strconv.Itoa(int(tunnelID))
-	logger.Info.Println("API requested tunnel " + tunnelIDString + " to be destroyed")
+	logger.Info.Println("Received request to destroy tunnel " + tunnelIDString)
 	if !exists {
 		logger.Error.Println("Trying to remove unknown tunnel " + tunnelIDString)
 		return errors.New("ArgumentError")

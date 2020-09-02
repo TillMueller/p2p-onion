@@ -11,6 +11,8 @@ import (
 	"onion/storage"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 const PEMPubKeyLength = 178
@@ -18,11 +20,10 @@ const packetLength = 1232 // == 1280 (v6 minimum MTU) - 40 (v6 header) - 8 (udp 
 const DH_MSGCODE = 0x0
 const DATA_MSGCODE = 0x1 // set if contained payload is data. If not set, payload is part of a Diffie-Hellman Handshake
 const RST_MSGCODE = 0x2
+// TODO move timeout to config?
+const timeout = 2 * time.Second
 
-// setup data structures for flow IDs, sym
-// flow looks like this: "ip:TPort" and maps to a flow ID which is used to
-// identify all data connected to that flow
-var flowMap = make(map[string]int)
+var receivingMutex sync.Mutex
 
 // contains the next used sequence number
 var sendingSeqNums = storage.InitSequenceNumbers()
@@ -44,7 +45,7 @@ func newKey(sharedSecret []byte, addrString string) {
 	// initially set receiving sequence number
 	storage.SetSequenceNumbersValue(receivingSeqNums, addrString, 0)
 	// notify waiting goroutines of new value
-	storage.BroadcastSymmetricKeys(keyMap)
+	storage.BroadcastSymmetricKeys(keyMap, addrString)
 }
 
 func getUDPAddrString(addr *net.UDPAddr) (string, error) {
@@ -102,6 +103,7 @@ func SetPacketReceiver(listeningAddress string, callback func(*net.UDPAddr, []by
 }
 
 func listen(udpconn *net.UDPConn, callback func(*net.UDPAddr, []byte)) {
+	defer udpconn.Close()
 	for {
 		buf := make([]byte, packetLength)
 		curLength, addr, err := udpconn.ReadFromUDP(buf)
@@ -187,6 +189,8 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 		handleDHExchange(udpconn, addr, data)
 		return
 	}
+	receivingMutex.Lock()
+	defer receivingMutex.Unlock()
 	// this is not a Diffie-Hellman, we need to decrypt and handle data
 	// there should already be a key here
 	key, exists := storage.GetSymmetricKeysValue(keyMap, addrStr)
@@ -219,11 +223,11 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 		return
 	}
 	if receivedSeqNum < curSeqNum {
-		logger.Warning.Println("Received packet with repeated sequence number (" + strconv.Itoa(receivedSeqNum) + ") from peer: " + addrStr)
+		logger.Warning.Println("Received packet with repeated sequence number (got " + strconv.Itoa(receivedSeqNum) + ", expected " + strconv.Itoa(curSeqNum) +") from peer: " + addrStr)
 		return
 	}
 	if receivedSeqNum > curSeqNum {
-		logger.Info.Println("Some sequence numbers were missed, possibly due to lost packets. Expected sequence number: " + strconv.Itoa(curSeqNum) + "; received sequence number: " + strconv.Itoa(receivedSeqNum))
+		logger.Warning.Println("Some sequence numbers were missed, possibly due to lost packets. Expected sequence number: " + strconv.Itoa(curSeqNum) + "; received sequence number: " + strconv.Itoa(receivedSeqNum) + " from peer " + addrStr)
 	}
 	storage.SetSequenceNumbersValue(receivingSeqNums, addrStr, receivedSeqNum+1)
 	logger.Info.Println("Got message (length " + strconv.Itoa(int(size)) + ")")
@@ -272,8 +276,12 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 		}
 		// wait until DH is done
 		logger.Info.Println("Waiting for DH with peer: " + addrString)
-		// TODO make this time out after some time
-		key = storage.WaitForSymmetricKeysValue(keyMap, addrString)
+		key, exists = storage.WaitForSymmetricKeysValue(keyMap, addrString, timeout)
+		if !exists {
+			logger.Warning.Println("HopLayer keyexchange timed out, aborting")
+			clearPeerInformation(addrString)
+			return errors.New("NetworkError")
+		}
 	}
 	// encrypt
 	sizeBytes := make([]byte, 2)
@@ -284,6 +292,7 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 		logger.Error.Println("Didn't find sequence number for given address: " + addrString)
 		return errors.New("internalError")
 	}
+	logger.Info.Println("Sending out packet to " + addrString + " with sequence number " + strconv.Itoa(seqNum))
 	binary.BigEndian.PutUint32(seqBytes, uint32(seqNum))
 	headerBytes := append(sizeBytes, seqBytes...)
 	data = append(headerBytes, data...)

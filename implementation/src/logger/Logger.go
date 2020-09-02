@@ -41,7 +41,7 @@ func getRandomNumber(max int) int {
 }
 
 func InitializeLogger(name string) {
-	Info = log.New(logFile, "[" + name + "] INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
-	Warning = log.New(logFile, "[" + name +  "] WARNING: ", log.Ldate|log.Ltime|log.Lshortfile)
-	Error = log.New(logFile, "[" + name +  "] ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+	Info = log.New(logFile, "[" + name + "] INFO: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	Warning = log.New(logFile, "[" + name +  "] WARNING: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	Error = log.New(logFile, "[" + name +  "] ERROR: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
 }
