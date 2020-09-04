@@ -230,7 +230,7 @@ func TestBuildTunnelSingleHopPeer1(t *testing.T) {
 	}
 	t.Log("TESTING: Built tunnel without error: " + strconv.Itoa(int(tunnelID)))
 	time.Sleep(time.Second)
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10; i++ {
 		time.Sleep(5 * time.Millisecond)
 		err = sendData(tunnelID, []byte("This is message " + strconv.Itoa(i)))
 		if err != nil {

@@ -39,8 +39,6 @@ const (
 	MSG_COMPLETED   uint8 = 0x04
 	MSG_FORWARD     uint8 = 0x05
 	MSG_DATA        uint8 = 0x06
-	// TODO send destroy message to initiator if no connection at destination wants this tunnel
-	// 	initiator then removes the tunnel as if someone sent TUNNEL DESTROY to it
 	MSG_DESTROY       uint8 = 0x07
 	MSG_KEEPALIVE     uint8 = 0x08
 	MSG_KEEPALIVERESP uint8 = 0x09
@@ -60,7 +58,7 @@ var forwarders = storage.InitForwarders()
 var peerTPorts = storage.InitPeerTPorts()
 var udpconn *net.UDPConn
 
-func handleAPIRequest(conn net.Conn, msgType uint16, data []byte) (uint32, error) {
+func handleAPIRequest(msgType uint16, data []byte) (uint32, []byte, error) {
 	switch msgType {
 	case api.ONION_TUNNEL_BUILD:
 		logger.Info.Println("Got API request to build tunnel")
@@ -71,35 +69,80 @@ func handleAPIRequest(conn net.Conn, msgType uint16, data []byte) (uint32, error
 		peerHostkey, err := x509.ParsePKCS1PublicKey(data[ipAddressEnd:])
 		if err != nil {
 			logger.Error.Println("Could not parse peer public key from API ONION_TUNNEL_BUILD message")
-			return 0, errors.New("APIError")
+			return 0, nil, errors.New("APIError")
 		}
 		tunnelID, err := BuildTunnel(peerAddress, peerAddressIsIPv6, onionPort, peerHostkey)
 		if err != nil {
 			logger.Error.Println("Could not build tunnel as requested by API")
-			return 0, errors.New("OnionError")
+			return 0, nil, errors.New("OnionError")
 		}
 		logger.Info.Println("API requested tunnel built successfully, ID " + strconv.Itoa(int(tunnelID)))
-		// send message to API
+		// send return message to API to be sent out
 		msgBuf := make([]byte, 4)
 		binary.BigEndian.PutUint32(msgBuf, tunnelID)
-		err = api.SendAPIMessage(conn, api.ONION_TUNNEL_READY, append(msgBuf, data[ipAddressEnd:]...))
+		return tunnelID, append(msgBuf, data[ipAddressEnd:]...), nil
+	case api.ONION_TUNNEL_DESTROY:
+		tunnelID := binary.BigEndian.Uint32(data[:4])
+		err := destroyTunnel(tunnelID)
 		if err != nil {
-			logger.Error.Println("Could not send ONION_TUNNEL_READY via API for newly built tunnel " + strconv.Itoa(int(tunnelID)))
-			return tunnelID, errors.New("APIError")
+			logger.Error.Println("Could not destroy tunnel as requested by API")
+			return tunnelID, nil, errors.New("OnionError")
 		}
-		return tunnelID, nil
+		return tunnelID, nil, nil
 	case api.ONION_TUNNEL_DATA:
 		tunnelID := binary.BigEndian.Uint32(data[:4])
 		err := sendData(tunnelID, data[4:])
 		if err != nil {
 			logger.Error.Println("Could not send data into tunnel " + strconv.Itoa(int(tunnelID)) + " as requested by API")
-			return tunnelID, errors.New("OnionError")
+			return tunnelID, nil, errors.New("OnionError")
 		}
+		return tunnelID, nil, nil
+	case api.ONION_COVER:
+		coverSize := int(binary.BigEndian.Uint16(data[:2]))
+		err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey := api.RPSQuery()
+		if err != nil {
+			logger.Error.Println("Could not solicit random peer for ONION_COVER")
+			return 0, nil, errors.New("APIError")
+		}
+		// build tunnel
+		tunnelID, err := BuildTunnel(peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey)
+		if err != nil {
+			logger.Error.Println("Could not build tunnel for ONION_COVER")
+			return 0, nil, errors.New("OnionError")
+		}
+		// send data in chunks
+		for ; coverSize > 0; coverSize -= api.COVER_CHUNK_SIZE {
+			chunkSize := api.COVER_CHUNK_SIZE
+			if chunkSize > coverSize {
+				chunkSize = coverSize
+			}
+			msgBuf := make([]byte, chunkSize+4)
+			binary.BigEndian.PutUint32(msgBuf[:4], tunnelID)
+			n, err := rand.Read(msgBuf[4:])
+			if n != chunkSize || err != nil {
+				logger.Error.Println("Could not read random data for ONION_COVER")
+				return 0, nil, errors.New("CryptoError")
+			}
+			err = sendData(tunnelID, msgBuf)
+			if err != nil {
+				logger.Error.Println("Could not send data for ONION_COVER")
+				return 0, nil, errors.New("OnionError")
+			}
+			// wait for some time to not send everything at once
+			time.Sleep(api.COVER_SLEEP_DURATION)
+		}
+		// close tunnel
+		err = destroyTunnel(tunnelID)
+		if err != nil {
+			logger.Error.Println("Could not close tunnel created by ONION_COVER")
+			// the cover traffic got sent so we ignore this error
+			return 0, nil, nil
+		}
+		return 0, nil, nil
 	default:
-		logger.Error.Println("Got unknown API message type: " + strconv.Itoa(int(msgType)) + " from " + conn.RemoteAddr().String())
-		return 0, errors.New("ArgumentError")
+		logger.Error.Println("Got unknown API message type: " + strconv.Itoa(int(msgType)) + ". This should never happen.")
+		return 0, nil, errors.New("ArgumentError")
 	}
-	return 0, nil
 }
 
 func Initialize() error {
@@ -396,14 +439,17 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 					logger.Info.Println("Got DATA from incomplete tunnel, discarding")
 					return
 				}
-				// TODO send data to API
-				logger.Info.Println("Got DATA as initiator from tunnel with ID " + tunnelIDString)
+				err = api.SendTunnelApiConnections(forwarder.TunnelID, api.ONION_TUNNEL_DATA, decryptedMsg[1:])
+				if err != nil {
+					logger.Error.Println("Could not broadcast data to tunnel API connections")
+					return
+				}
 			case MSG_DESTROY:
 				logger.Info.Println("Got DESTROY message from forwarder " + forwarderIdentifier)
 				forwarder.RemoveForwarder = true
 				return
 			case MSG_KEEPALIVERESP:
-				// we got a keepalive, but everything it needs to do has already been done
+				// we got a keepalive response, but everything it needs to do has already been done
 				// so we just ignore it
 			default:
 				logger.Warning.Println("Got wrong message type from tunnel " + strconv.Itoa(int(forwarder.TunnelID)) +
@@ -484,12 +530,10 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 				logger.Error.Println("Could not send COMPLETED message")
 				return
 			}
-			tunnelIDBuf := make([]byte, 4)
-			binary.BigEndian.PutUint32(tunnelIDBuf, tunnelID)
 			logger.Info.Println("Broadcasting new tunnel with ID " + strconv.Itoa(int(tunnelID)) + " to all API connections")
-			err = api.SendAllAPIConnections(api.ONION_TUNNEL_INCOMING, tunnelIDBuf)
+			err = api.OnionTunnelIncoming(tunnelID)
 			if err != nil {
-				logger.Error.Println("Could not send API message to all connections for ONION_TUNNEL_INCOMING")
+				logger.Error.Println("Could not broadcast new tunnel with ID " + strconv.Itoa(int(tunnelID)) + " to all API connections")
 				return
 			}
 		default:
@@ -551,8 +595,11 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		case MSG_DATA:
 			// get tunnel ID from forwarder
 			tunnelID := forwarder.TunnelID
-			// TODO broadcast data to the API connections (ONION TUNNEL DATA)
-			logger.Info.Println("Got DATA from tunnel with ID " + strconv.Itoa(int(tunnelID)))
+			err := api.SendTunnelApiConnections(tunnelID, api.ONION_TUNNEL_DATA, decryptedMsg[1:])
+			if err != nil {
+				logger.Error.Println("Could not broadcast data to tunnel API connections")
+				return
+			}
 		case MSG_DESTROY:
 			logger.Info.Println("Got DESTROY from initiator, forwarder " + forwarderIdentifier)
 			forwarder.RemoveForwarder = true
@@ -862,13 +909,11 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 	sourceForwarder.LastMessageTime = time.Now()
 	if !curTunnel.Completed {
 		// we did not receive a COMPLETED message, tunnel build was therefore a failure
-		// TODO send failure to API
 		sourceForwarder.RemoveForwarder = true
 		logger.Error.Println("Did not receive COMPLETE message in time, assuming tunnel is broken")
 		return 0, errors.New("TunnelError")
 	}
 	go watchForwarder(sourceForwarder, curTunnel.ForwarderIdentifier)
-	// TODO notify API that tunnel is ready
 	logger.Info.Println("Tunnel with ID " + strconv.Itoa(int(tunnelID)) + " built successfully")
 	return tunnelID, nil
 }

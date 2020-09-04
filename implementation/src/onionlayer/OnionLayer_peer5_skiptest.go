@@ -19,6 +19,7 @@ func connectToApi(t *testing.T) {
 		t.Errorf("Could not connect to api")
 		return
 	}
+	defer conn.Close()
 	for {
 		msgType, msgBuf, err := api.ReceiveAPIMessage(conn)
 		if err != nil {

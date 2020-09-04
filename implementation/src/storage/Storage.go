@@ -429,7 +429,8 @@ func CleanupNotifyGroup(notifyGroupsMap *NotifyGroups, key string) {
 }
 
 type ApiConnection struct {
-	Connection net.Conn
+	Connection   net.Conn
+	RequestClose bool
 }
 
 type ApiConnections struct {
@@ -458,11 +459,29 @@ func RemoveApiConnection(apiConnectionMap *ApiConnections, value *ApiConnection)
 			continue
 		}
 		if apiConn == value {
+			apiConn.RequestClose = true
 			apiConnectionMap.data.Remove(cur)
 			break
 		}
 	}
 	apiConnectionMap.mutex.Unlock()
+}
+
+func GetApiConnection(apiConnectionMap *ApiConnections, conn net.Conn) (*ApiConnection, error) {
+	apiConnectionMap.mutex.Lock()
+	defer apiConnectionMap.mutex.Unlock()
+	for cur := apiConnectionMap.data.Front(); cur != nil; cur = cur.Next() {
+		apiConn, typeCheck := cur.Value.(*ApiConnection)
+		if !typeCheck {
+			logger.Warning.Println("Got wrong type from API connections list")
+			continue
+		}
+		if apiConn.Connection == conn {
+			return apiConn, nil
+		}
+	}
+	logger.Error.Println("Did not find connection in API connections list")
+	return nil, errors.New("ArgumentError")
 }
 
 func SendAllApiConnections(apiConnectionMap *ApiConnections, data []byte) {
@@ -480,4 +499,99 @@ func SendAllApiConnections(apiConnectionMap *ApiConnections, data []byte) {
 		}
 	}
 	apiConnectionMap.mutex.Unlock()
+}
+
+func GetAllAPIConnections(apiConnectionMap *ApiConnections) []*ApiConnection {
+	apiConnectionMap.mutex.Lock()
+	apiConnections := make([]*ApiConnection, apiConnectionMap.data.Len())
+	counter := 0
+	for cur := apiConnectionMap.data.Front(); cur != nil; cur = cur.Next() {
+		apiConn, typeCheck := cur.Value.(*ApiConnection)
+		if !typeCheck {
+			logger.Warning.Println("Got wrong type from API connections list")
+			continue
+		}
+		apiConnections[counter] = apiConn
+		counter++
+	}
+	apiConnectionMap.mutex.Unlock()
+	return apiConnections
+}
+
+type TunnelApiConnections struct {
+	data  map[uint32]*list.List
+	mutex sync.Mutex
+}
+
+func InitTunnelApiConnections() *TunnelApiConnections {
+	return &TunnelApiConnections{
+		data: make(map[uint32]*list.List),
+	}
+}
+
+func AddTunnelApiConnection(tunnelApiConnectionsMap *TunnelApiConnections, key uint32, connection *ApiConnection) {
+	tunnelApiConnectionsMap.mutex.Lock()
+	tunnelApiConnection, exists := tunnelApiConnectionsMap.data[key]
+	if !exists {
+		tunnelApiConnection = list.New()
+		tunnelApiConnectionsMap.data[key] = tunnelApiConnection
+	}
+	tunnelApiConnection.PushBack(connection)
+	tunnelApiConnectionsMap.mutex.Unlock()
+}
+
+func RemoveTunnelApiConnection(tunnelApiConnectionsMap *TunnelApiConnections, key uint32, connection *ApiConnection) (listEmpty bool) {
+	tunnelApiConnectionsMap.mutex.Lock()
+	defer tunnelApiConnectionsMap.mutex.Unlock()
+	tunnelApiConnection, exists := tunnelApiConnectionsMap.data[key]
+	if !exists {
+		return true
+	}
+	for cur := tunnelApiConnection.Front(); cur != nil; cur = cur.Next() {
+		if cur.Value == connection {
+			tunnelApiConnection.Remove(cur)
+			break
+		}
+	}
+	if tunnelApiConnection.Len() == 0 {
+		delete(tunnelApiConnectionsMap.data, key)
+		return true
+	}
+	return false
+}
+
+func ExistsTunnelApiConnection(tunnelApiConnectionsMap *TunnelApiConnections, key uint32, connection *ApiConnection) bool {
+	tunnelApiConnectionsMap.mutex.Lock()
+	defer tunnelApiConnectionsMap.mutex.Unlock()
+	tunnelApiConnection, exists := tunnelApiConnectionsMap.data[key]
+	if !exists {
+		return false
+	}
+	for cur := tunnelApiConnection.Front(); cur != nil; cur = cur.Next() {
+		if cur.Value == connection {
+			return true
+		}
+	}
+	return false
+}
+
+func SendTunnelApiConnections(tunnelApiConnectionsMap *TunnelApiConnections, key uint32, data []byte) {
+	tunnelApiConnectionsMap.mutex.Lock()
+	defer tunnelApiConnectionsMap.mutex.Unlock()
+	tunnelApiConnection, exists := tunnelApiConnectionsMap.data[key]
+	if !exists {
+		return
+	}
+	for cur := tunnelApiConnection.Front(); cur != nil; cur = cur.Next() {
+		apiConn, typeCheck := cur.Value.(*ApiConnection)
+		if !typeCheck {
+			logger.Warning.Println("Got wrong type from API connections list")
+			continue
+		}
+		n, err := apiConn.Connection.Write(data)
+		if err != nil || n != len(data) {
+			logger.Warning.Println("Could not send API message to connection " + apiConn.Connection.RemoteAddr().String())
+			continue
+		}
+	}
 }

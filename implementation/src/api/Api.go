@@ -11,15 +11,20 @@ import (
 	"onion/logger"
 	"onion/storage"
 	"strconv"
+	"time"
 )
 
 const (
-	LENGTH_OF_SIZE   = 2
-	LENGTH_OF_TYPE   = 2
-	LENGTH_OF_HEADER = LENGTH_OF_SIZE + LENGTH_OF_TYPE
-	RPS_QUERY        = 540
-	RPS_PEER         = 541
-	ONION_APP_ID     = 560
+	LENGTH_OF_SIZE       = 2
+	LENGTH_OF_TYPE       = 2
+	LENGTH_OF_HEADER     = LENGTH_OF_SIZE + LENGTH_OF_TYPE
+	// TODO move these two to config?
+	COVER_CHUNK_SIZE     = 1000
+	COVER_SLEEP_DURATION = 30 * time.Millisecond
+
+	RPS_QUERY    = 540
+	RPS_PEER     = 541
+	ONION_APP_ID = 560
 
 	ONION_TUNNEL_BUILD    = 560
 	ONION_TUNNEL_READY    = 561
@@ -27,13 +32,14 @@ const (
 	ONION_TUNNEL_DESTROY  = 563
 	ONION_TUNNEL_DATA     = 564
 	ONION_ERROR           = 565
-	ONION_CONVER          = 566
+	ONION_COVER           = 566
 )
 
 var apiConnections = storage.InitApiConnections()
-var onionLayerHandler func(net.Conn, uint16, []byte) (uint32, error)
+var tunnelApiConnections = storage.InitTunnelApiConnections()
+var onionLayerHandler func(uint16, []byte) (uint32, []byte, error)
 
-func RegisterOnionLayerHandler(callback func(net.Conn, uint16, []byte) (uint32, error)) {
+func RegisterOnionLayerHandler(callback func(uint16, []byte) (uint32, []byte, error)) {
 	onionLayerHandler = callback
 }
 
@@ -48,30 +54,84 @@ func sendApiErrorMessage(conn net.Conn, requestType uint16, tunnelID uint32) {
 	}
 }
 
-func handleApiMessage(conn net.Conn, msgType uint16, msgBuf []byte) {
-	tunnelID, err := onionLayerHandler(conn, msgType, msgBuf)
-	if err != nil {
-		logger.Error.Println("Could not handle API request from " + conn.RemoteAddr().String() + ", sending ONION_ERROR")
-		sendApiErrorMessage(conn, msgType, tunnelID)
+func handleApiMessage(apiConn *storage.ApiConnection, msgType uint16, msgBuf []byte) {
+	switch msgType {
+	case ONION_TUNNEL_BUILD:
+		tunnelID, resp, err := onionLayerHandler(msgType, msgBuf)
+		if err != nil {
+			logger.Error.Println("Could not handle ONION_TUNNEL_BUILD from " + apiConn.Connection.RemoteAddr().String() + ", sending ONION_ERROR")
+			sendApiErrorMessage(apiConn.Connection, msgType, tunnelID)
+			return
+		}
+		// only the creator of the tunnel is allowed to send data into it
+		storage.AddTunnelApiConnection(tunnelApiConnections, tunnelID, apiConn)
+		// tunnel was created successfully, send ONION_TUNNEL_READY
+		err = SendAPIMessage(apiConn.Connection, ONION_TUNNEL_READY, resp)
+		if err != nil {
+			logger.Error.Println("Could not send ONION_TUNNEL_READY message to " + apiConn.Connection.RemoteAddr().String() + ", attempting to send ONION_ERROR")
+			// attempting to send an API error message even though it is very likely to fail
+			sendApiErrorMessage(apiConn.Connection, msgType, tunnelID)
+			return
+		}
+	case ONION_TUNNEL_DESTROY:
+		tunnelID := binary.BigEndian.Uint32(msgBuf[:4])
+		listEmpty := storage.RemoveTunnelApiConnection(tunnelApiConnections, tunnelID, apiConn)
+		if listEmpty {
+			logger.Info.Println("No more API connections for tunnel " + strconv.Itoa(int(tunnelID)) + ", destroying it")
+			tunnelID, _, err := onionLayerHandler(msgType, msgBuf)
+			if err != nil {
+				logger.Error.Println("Could not handle ONION_TUNNEL_DESTROY from " + apiConn.Connection.RemoteAddr().String() + ", sending ONION_ERROR")
+				sendApiErrorMessage(apiConn.Connection, msgType, tunnelID)
+				return
+			}
+		}
+	case ONION_TUNNEL_DATA:
+		tunnelID := binary.BigEndian.Uint32(msgBuf[:4])
+		if storage.ExistsTunnelApiConnection(tunnelApiConnections, tunnelID, apiConn) {
+			logger.Warning.Println("Connection " + apiConn.Connection.RemoteAddr().String() + " tried to send on unknown or disallowed tunnel, closing API connection")
+			storage.RemoveApiConnection(apiConnections, apiConn)
+			return
+		}
+		tunnelID, _, err := onionLayerHandler(msgType, msgBuf)
+		if err != nil {
+			logger.Error.Println("Could not handle ONION_TUNNEL_DATA from " + apiConn.Connection.RemoteAddr().String() + ", sending ONION_ERROR")
+			sendApiErrorMessage(apiConn.Connection, msgType, tunnelID)
+			return
+		}
+	case ONION_COVER:
+		_, _, err := onionLayerHandler(msgType, msgBuf)
+		if err != nil {
+			logger.Error.Println("Could not handle ONION_COVER from " + apiConn.Connection.RemoteAddr().String() + ", sending ONION_ERROR")
+			sendApiErrorMessage(apiConn.Connection, msgType, 0)
+			return
+		}
+	default:
+		logger.Warning.Println("Got unexpected message type " + strconv.Itoa(int(msgType)) + ", terminating API connection")
+		storage.RemoveApiConnection(apiConnections, apiConn)
 	}
 }
 
 func handleApiConnection(conn net.Conn) {
 	logger.Info.Println("New API connection from " + conn.RemoteAddr().String())
 	apiConn := &storage.ApiConnection{
-		Connection: conn,
+		Connection:   conn,
+		RequestClose: false,
 	}
 	defer conn.Close()
 	storage.AddApiConnection(apiConnections, apiConn)
 	for {
+		if apiConn.RequestClose {
+			return
+		}
 		msgType, msgBuf, err := ReceiveAPIMessage(conn)
+		if apiConn.RequestClose {
+			return
+		}
 		if err != nil {
 			logger.Warning.Println("Could not receive message from API connection: " + conn.RemoteAddr().String())
 			continue
 		}
-		go handleApiMessage(conn, msgType, msgBuf)
-		// TODO read from this api connection
-		// TODO come up with a way to kill these API connections
+		go handleApiMessage(apiConn, msgType, msgBuf)
 	}
 }
 
@@ -85,6 +145,32 @@ func listenApi(listenConn net.Listener) {
 		}
 		go handleApiConnection(conn)
 	}
+}
+
+func OnionTunnelIncoming(tunnelID uint32) error {
+	// everyone may interact with an incoming tunnel
+	for _, value := range storage.GetAllAPIConnections(apiConnections) {
+		storage.AddTunnelApiConnection(tunnelApiConnections, tunnelID, value)
+	}
+	// send ONION_TUNNEL_INCOMING API message to all connections
+	tunnelIDBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(tunnelIDBuf, tunnelID)
+	err := SendAllAPIConnections(ONION_TUNNEL_INCOMING, tunnelIDBuf)
+	if err != nil {
+		logger.Error.Println("Could not send API message to all connections for ONION_TUNNEL_INCOMING")
+		return errors.New("APIError")
+	}
+	return nil
+}
+
+func SendTunnelApiConnections(tunnelID uint32, msgType uint16, data []byte) error {
+	msgBuf, err := buildAPIMessage(msgType, data)
+	if err != nil {
+		logger.Error.Println("Could not build message to send to all API connections of tunnel " + strconv.Itoa(int(tunnelID)))
+		return errors.New("APIError")
+	}
+	storage.SendTunnelApiConnections(tunnelApiConnections, tunnelID, msgBuf)
+	return nil
 }
 
 func Initialize() error {
