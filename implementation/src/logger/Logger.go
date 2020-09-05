@@ -3,6 +3,7 @@ package logger
 import (
 	"crypto/rand"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/big"
 	"onion/config"
@@ -45,7 +46,13 @@ func getRandomNumber(max int) int {
 func initializeLogger(name string) {
 	warningMultiWriter := io.MultiWriter(os.Stdout, logFile)
 	errorMultiWriter := io.MultiWriter(os.Stderr, logFile)
-	Info = log.New(logFile, "["+name+"] INFO: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	var infoLogDest io.Writer
+	if config.LogInfo {
+		infoLogDest = logFile
+	} else {
+		infoLogDest = ioutil.Discard
+	}
+	Info = log.New(infoLogDest, "["+name+"] INFO: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
 	Warning = log.New(warningMultiWriter, "["+name+"] WARNING: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
 	Error = log.New(errorMultiWriter, "["+name+"] ERROR: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
 }

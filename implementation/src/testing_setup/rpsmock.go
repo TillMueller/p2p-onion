@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-var lastPeer = 4
+var destinationPeer = 4
 var addressString = "localhost:65530"
 var t *testing.T
 
@@ -28,7 +28,7 @@ func getHostKey(n int) []byte {
 }
 
 func destinationKey() *rsa.PublicKey {
-	publickey, err := x509.ParsePKCS1PublicKey(getHostKey(lastPeer))
+	publickey, err := x509.ParsePKCS1PublicKey(getHostKey(destinationPeer))
 	if err != nil {
 		t.Errorf(err.Error())
 	}
@@ -36,7 +36,7 @@ func destinationKey() *rsa.PublicKey {
 }
 
 func getRspHeader(n int) []byte {
-	rspStart := make([][]byte, 3)
+	rspStart := make([][]byte, 4)
 	rspStart[0] = []byte{
 		0x0, 0x0, 0x2, 0x1d, // 2 bytes size, 2 bytes RPS PEER (541) in big endian
 		0x0, 0x0, 0x1, 0x0, // 2 bytes port (unused), 1 byte number of ports in map (1), 1 port reserved and last bit indicated IP version (IPv4 = 0)
@@ -52,7 +52,13 @@ func getRspHeader(n int) []byte {
 	rspStart[2] = []byte{
 		0x0, 0x0, 0x2, 0x1d, // 2 bytes size, 2 bytes RPS PEER (541) in big endian
 		0x0, 0x0, 0x1, 0x0, // 2 bytes port (unused), 1 byte number of ports in map (1), 1 port reserved and last bit indicated IP version (IPv4 = 0)
-		0x2, 0x30, 0xff, 0xe3, // 2 bytes onion app id (560) in big endian, 2 bytes the port it listens on (65506) in big endian
+		0x2, 0x30, 0xff, 0xe3, // 2 bytes onion app id (560) in big endian, 2 bytes the port it listens on (65507) in big endian
+		0x7f, 0x0, 0x0, 0x1, // 4 bytes peer IPv4 address (127.0.0.1)
+	}
+	rspStart[3] = []byte{
+		0x0, 0x0, 0x2, 0x1d, // 2 bytes size, 2 bytes RPS PEER (541) in big endian
+		0x0, 0x0, 0x1, 0x0, // 2 bytes port (unused), 1 byte number of ports in map (1), 1 port reserved and last bit indicated IP version (IPv4 = 0)
+		0x2, 0x30, 0xff, 0xe4, // 2 bytes onion app id (560) in big endian, 2 bytes the port it listens on (65508) in big endian
 		0x7f, 0x0, 0x0, 0x1, // 4 bytes peer IPv4 address (127.0.0.1)
 	}
 	return rspStart[n]
@@ -89,7 +95,7 @@ func serveRPS() {
 		_, _ = conn.Write(getPeerDetails(counter))
 		conn.Close()
 		counter++
-		if counter == 3 {
+		if counter == 4 {
 			counter = 0
 		}
 	}

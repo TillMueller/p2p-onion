@@ -64,12 +64,21 @@ func removeLogFile(n int, t *testing.T) {
 	}
 }
 
-func TestBuildTunnel(t *testing.T) {
-	var wg sync.WaitGroup
+func cleanupAndExit(wg *sync.WaitGroup) {
+	killPeers = true
+	wg.Wait()
+}
+
+func initializeTest(wg *sync.WaitGroup, t *testing.T) {
+	// remove testing log file
+	err := os.Remove("testing.log")
+	if err != nil {
+		t.Errorf("Could not remove testing logfile (testing.log)")
+	}
 	// remove log files and start peers in separate instances
 	for i := 0; i < 5; i++ {
 		removeLogFile(i, t)
-		go runAndPrintCommand("go run main.go -c testing_setup/peer" + strconv.Itoa(i) + "/config.ini", &wg, t)
+		go runAndPrintCommand("go run main.go -c testing_setup/peer"+strconv.Itoa(i)+"/config.ini", wg, t)
 	}
 	config.LogfileLocation = "testing.log"
 	// start our logger
@@ -77,14 +86,38 @@ func TestBuildTunnel(t *testing.T) {
 	// start mocked RPS module
 	go testing_setup.InitializeRPS(t)
 	// let them start up
-	time.Sleep(time.Second)
-	// start client
-	go testing_setup.InitializeClient()
+	time.Sleep(3 * time.Second)
+}
+
+func TestBuildTunnel(t *testing.T) {
+	var wg sync.WaitGroup
+
+	initializeTest(&wg, t)
+	defer cleanupAndExit(&wg)
+	// start client on initiator side
+	go testing_setup.InitializeClient("localhost:65510")
+	// start client on receiver side
+	go testing_setup.InitializeClient("localhost:65514")
+	// start client somewhere in the middle (no data should arrive there)
+	go testing_setup.InitializeClient("localhost:65512")
 	// let them start up
 	time.Sleep(time.Second)
 	// send build tunnel command
-	testing_setup.BuildTunnelTest()
-	time.Sleep(10 * time.Second)
-	killPeers = true
-	wg.Wait()
+	testing_setup.BuildTunnelTest("localhost:65510")
+	time.Sleep(20 * time.Second)
+}
+
+func TestCoverTraffic(t *testing.T) {
+	var wg sync.WaitGroup
+	defer cleanupAndExit(&wg)
+	initializeTest(&wg, t)
+	// start client on initiator side
+	go testing_setup.InitializeClient("localhost:65510")
+	// start client on receiver side
+	go testing_setup.InitializeClient("localhost:65514")
+	// let them start up
+	time.Sleep(time.Second)
+	// send cover command
+	testing_setup.CoverTrafficTest("localhost:65510")
+	time.Sleep(30 * time.Second)
 }

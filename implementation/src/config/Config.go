@@ -23,6 +23,7 @@ var (
 	default_api_address       = "127.0.0.1:42425"
 	default_hostkey_location  = "hostkey.pem"
 	default_logfile_location  = "onion.log"
+	default_log_info          = true
 
 	P2p_port          int
 	P2p_hostname      string
@@ -31,6 +32,7 @@ var (
 	RpsAddress        string
 	ApiAddress        string
 	LogfileLocation   = default_logfile_location
+	LogInfo           bool
 )
 
 // TODO add logfile location to config
@@ -65,7 +67,7 @@ func LoadConfig(path string) error {
 	// TODO maybe we need to check where the path is relative to
 	config, err := ini.Load(path)
 	if err != nil {
-		_, err = fmt.Fprintln(os.Stderr, "Could not load configuration file " + path)
+		_, err = fmt.Fprintln(os.Stderr, "Could not load configuration file "+path)
 		if err != nil {
 			panic(err)
 		}
@@ -136,6 +138,21 @@ func LoadConfig(path string) error {
 	} else {
 		writeError("Configuration section onion does not contain parameter logfile_location, using default: " + default_logfile_location)
 		LogfileLocation = default_logfile_location
+	}
+
+	if section.HasKey("log_info") {
+		switch section.Key("log_info").String() {
+		case "yes":
+			LogInfo = true
+		case "no":
+			LogInfo = false
+		default:
+			writeError("Configuration parameter log_info is malformed, using default: true")
+			LogInfo = true
+		}
+	} else {
+		writeError("Configuration section onion does not contain parameter logfile_location, using default: true")
+		LogInfo = true
 	}
 
 	rpsSection, err := config.GetSection("rps")

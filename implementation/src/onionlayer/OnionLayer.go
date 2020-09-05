@@ -22,31 +22,31 @@ import (
 
 const (
 	// TODO move timeouts to config?
-	RESP_TIMEOUT                 = 5 * time.Second
+	RESP_TIMEOUT = 5 * time.Second
 	// if the latency between the tunnel initiator and destination is > TUNNEL_INACTIVITY_TIMEOUT / 2 the tunnel will
 	// always fail. If you have high-latency connections increase this as required
-	TUNNEL_INACTIVITY_TIMEOUT    = 5 * time.Second
+	TUNNEL_INACTIVITY_TIMEOUT = 5 * time.Second
 	// defines how often a forwarder is checked for timeouts and how often KEEPALIVE messages are sent by the tunnel initiator
 	FORWARDER_KEEPALIVE_INTERVAL = time.Second
 	// how often do we try a new peer when building a tunnel before assuming that everything is broken and giving up
 	TUNNEL_BUILD_RETRY_COUNT = 5
-	PUBKEY_LENGTH                = 178
+	PUBKEY_LENGTH            = 178
 
-	MSG_KEYXCHG     uint8 = 0x00
-	MSG_KEYXCHGRESP uint8 = 0x01
-	MSG_EXTEND      uint8 = 0x02
-	MSG_COMPLETE    uint8 = 0x03
-	MSG_COMPLETED   uint8 = 0x04
-	MSG_FORWARD     uint8 = 0x05
-	MSG_DATA        uint8 = 0x06
+	MSG_KEYXCHG       uint8 = 0x00
+	MSG_KEYXCHGRESP   uint8 = 0x01
+	MSG_EXTEND        uint8 = 0x02
+	MSG_COMPLETE      uint8 = 0x03
+	MSG_COMPLETED     uint8 = 0x04
+	MSG_FORWARD       uint8 = 0x05
+	MSG_DATA          uint8 = 0x06
 	MSG_DESTROY       uint8 = 0x07
 	MSG_KEEPALIVE     uint8 = 0x08
 	MSG_KEEPALIVERESP uint8 = 0x09
+	MSG_COVER         uint8 = 0x0a
+	MSG_COVERRESP     uint8 = 0x0b
 
 	LOCAL_FORWARDER string = "_localhost_"
 )
-
-// TODO create cleanup function that e.g. closes the UDP connection when the program exits
 
 var sendMutex sync.Mutex
 
@@ -98,6 +98,7 @@ func handleAPIRequest(msgType uint16, data []byte) (uint32, []byte, error) {
 		}
 		return tunnelID, nil, nil
 	case api.ONION_COVER:
+		logger.Info.Println("Got ONION_COVER, building tunnel")
 		coverSize := int(binary.BigEndian.Uint16(data[:2]))
 		err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey := api.RPSQuery()
 		if err != nil {
@@ -116,17 +117,21 @@ func handleAPIRequest(msgType uint16, data []byte) (uint32, []byte, error) {
 			if chunkSize > coverSize {
 				chunkSize = coverSize
 			}
-			msgBuf := make([]byte, chunkSize+4)
-			binary.BigEndian.PutUint32(msgBuf[:4], tunnelID)
-			n, err := rand.Read(msgBuf[4:])
+			logger.Info.Println("Sending cover data of size " + strconv.Itoa(chunkSize))
+			msgBuf := make([]byte, chunkSize)
+			n, err := rand.Read(msgBuf)
 			if n != chunkSize || err != nil {
 				logger.Error.Println("Could not read random data for ONION_COVER")
+				err = destroyTunnel(tunnelID)
+				if err != nil {
+					logger.Error.Println("Could not close tunnel created by ONION_COVER")
+				}
 				return 0, nil, errors.New("CryptoError")
 			}
-			err = sendData(tunnelID, msgBuf)
+			err = sendIntoTunnel(tunnelID, append([]byte{MSG_COVER}, msgBuf...), false)
 			if err != nil {
 				logger.Error.Println("Could not send data for ONION_COVER")
-				return 0, nil, errors.New("OnionError")
+				return 0, nil, errors.New("TunnelError")
 			}
 			// wait for some time to not send everything at once
 			time.Sleep(api.COVER_SLEEP_DURATION)
@@ -453,6 +458,12 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			case MSG_KEEPALIVERESP:
 				// we got a keepalive response, but everything it needs to do has already been done
 				// so we just ignore it
+			case MSG_COVER:
+				// This should not happen, but when it does we log a warning and ignore it
+				logger.Warning.Println("Got COVER as initiator from forwarder " + forwarderIdentifier)
+			case MSG_COVERRESP:
+				// The cover traffic has now been send to the destination and back
+				// so we just ignore it
 			default:
 				logger.Warning.Println("Got wrong message type from tunnel " + strconv.Itoa(int(forwarder.TunnelID)) +
 					", expected COMPLETED or DATA, got " + strconv.Itoa(int(decryptedMsg[0])))
@@ -613,6 +624,16 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 				logger.Error.Println("Could not send KEEPALIVERESP")
 				return
 			}
+		case MSG_COVER:
+			// this is just cover traffic so we will just send it back
+			err := sendBackwardsThroughTunnel(forwarder, forwarderIdentifier, append([]byte{MSG_COVERRESP}, decryptedMsg[1:]...))
+			if err != nil {
+				logger.Error.Println("Could not send back cover traffic")
+				return
+			}
+		case MSG_COVERRESP:
+			// as the tunnel destination we should not get this message
+			logger.Warning.Println("Got MSG_COVERRESP as destination from " + forwarderIdentifier)
 		default:
 			logger.Error.Println("Got unexpected message type as tunnel destination (expected MSG_DATA): " + strconv.Itoa(int(decryptedMsg[0])))
 			return
@@ -764,7 +785,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 			peerAddressIsIPv6 = finalHopAddressIsIPv6
 			peerOnionPort = finalHopPort
 			peerHostkey = finalHopHostKey
-			peerAddressString = peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort)
+			peerAddressString = destinationPeerAddress
 		} else {
 			var err error
 			err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey = api.RPSQuery()
@@ -773,16 +794,15 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 				continue
 			}
 			peerAddressString = peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort)
-			skipPeer := false
-			for cur := curTunnel.Peers.Front(); cur != nil; cur = cur.Next() {
+			skipPeer := peerAddressString == destinationPeerAddress
+			for cur := curTunnel.Peers.Front(); !skipPeer && cur != nil; cur = cur.Next() {
 				curHop, typeCheck := cur.Value.(*storage.OnionPeer)
 				if !typeCheck {
 					logger.Warning.Println("Got object of wrong type from peer list")
 					continue
 				}
-				if curHop.Address == peerAddressString || curHop.Address == destinationPeerAddress {
+				if curHop.Address == peerAddressString {
 					skipPeer = true
-					break
 				}
 			}
 			if skipPeer {
