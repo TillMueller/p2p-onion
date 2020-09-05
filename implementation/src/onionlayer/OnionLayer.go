@@ -439,7 +439,9 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 					logger.Info.Println("Got DATA from incomplete tunnel, discarding")
 					return
 				}
-				err = api.SendTunnelApiConnections(forwarder.TunnelID, api.ONION_TUNNEL_DATA, decryptedMsg[1:])
+				tunnelIDBuf := make([]byte, 4)
+				binary.BigEndian.PutUint32(tunnelIDBuf, forwarder.TunnelID)
+				err = api.SendTunnelApiConnections(forwarder.TunnelID, api.ONION_TUNNEL_DATA, append(tunnelIDBuf, decryptedMsg[1:]...))
 				if err != nil {
 					logger.Error.Println("Could not broadcast data to tunnel API connections")
 					return
@@ -511,6 +513,7 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 				logger.Error.Println("Could not generate tunnelID for incoming tunnel")
 				return
 			}
+			logger.Info.Println("Incoming tunnel with ID " + strconv.Itoa(int(tunnelID)) + " has been established")
 			tunnel := &storage.Tunnel{
 				Completed:           true,
 				Initiator:           false,
@@ -593,9 +596,9 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		}
 		switch decryptedMsg[0] {
 		case MSG_DATA:
-			// get tunnel ID from forwarder
-			tunnelID := forwarder.TunnelID
-			err := api.SendTunnelApiConnections(tunnelID, api.ONION_TUNNEL_DATA, decryptedMsg[1:])
+			tunnelIDBuf := make([]byte, 4)
+			binary.BigEndian.PutUint32(tunnelIDBuf, forwarder.TunnelID)
+			err := api.SendTunnelApiConnections(forwarder.TunnelID, api.ONION_TUNNEL_DATA, append(tunnelIDBuf, decryptedMsg[1:]...))
 			if err != nil {
 				logger.Error.Println("Could not broadcast data to tunnel API connections")
 				return

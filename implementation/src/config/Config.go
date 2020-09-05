@@ -50,7 +50,7 @@ func loadPrivateKeyFile(hostkeyLocation string) error {
 	return nil
 }
 
-func loadConfig(path string) error {
+func LoadConfig(path string) error {
 	// TODO maybe we need to check where the path is relative to
 	config, err := ini.Load(path)
 	if err != nil {

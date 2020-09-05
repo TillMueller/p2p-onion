@@ -460,6 +460,7 @@ func RemoveApiConnection(apiConnectionMap *ApiConnections, value *ApiConnection)
 		}
 		if apiConn == value {
 			apiConn.RequestClose = true
+			apiConn.Connection.Close()
 			apiConnectionMap.data.Remove(cur)
 			break
 		}
@@ -484,21 +485,14 @@ func GetApiConnection(apiConnectionMap *ApiConnections, conn net.Conn) (*ApiConn
 	return nil, errors.New("ArgumentError")
 }
 
-func SendAllApiConnections(apiConnectionMap *ApiConnections, data []byte) {
-	apiConnectionMap.mutex.Lock()
-	for cur := apiConnectionMap.data.Front(); cur != nil; cur = cur.Next() {
-		apiConn, typeCheck := cur.Value.(*ApiConnection)
-		if !typeCheck {
-			logger.Warning.Println("Got wrong type from API connections list")
-			continue
-		}
+func SendAllApiConnections(conns []*ApiConnection, data []byte) {
+	for _, apiConn := range conns {
 		n, err := apiConn.Connection.Write(data)
 		if err != nil || n != len(data) {
 			logger.Warning.Println("Could not send API message to connection " + apiConn.Connection.RemoteAddr().String())
 			continue
 		}
 	}
-	apiConnectionMap.mutex.Unlock()
 }
 
 func GetAllAPIConnections(apiConnectionMap *ApiConnections) []*ApiConnection {
@@ -540,6 +534,15 @@ func AddTunnelApiConnection(tunnelApiConnectionsMap *TunnelApiConnections, key u
 	tunnelApiConnectionsMap.mutex.Unlock()
 }
 
+func RemoveApiConnectionFromAllTunnels(tunnelApiConnectionsMap *TunnelApiConnections, connection *ApiConnection) (tunnelsToRemove []uint32) {
+	for k, _ := range tunnelApiConnectionsMap.data {
+		if RemoveTunnelApiConnection(tunnelApiConnectionsMap, k, connection) {
+			tunnelsToRemove = append(tunnelsToRemove, k)
+		}
+	}
+	return tunnelsToRemove
+}
+
 func RemoveTunnelApiConnection(tunnelApiConnectionsMap *TunnelApiConnections, key uint32, connection *ApiConnection) (listEmpty bool) {
 	tunnelApiConnectionsMap.mutex.Lock()
 	defer tunnelApiConnectionsMap.mutex.Unlock()
@@ -565,6 +568,7 @@ func ExistsTunnelApiConnection(tunnelApiConnectionsMap *TunnelApiConnections, ke
 	defer tunnelApiConnectionsMap.mutex.Unlock()
 	tunnelApiConnection, exists := tunnelApiConnectionsMap.data[key]
 	if !exists {
+		logger.Info.Println("Trying to check if API connection exists for unknown tunnel")
 		return false
 	}
 	for cur := tunnelApiConnection.Front(); cur != nil; cur = cur.Next() {

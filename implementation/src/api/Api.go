@@ -69,7 +69,7 @@ func handleApiMessage(apiConn *storage.ApiConnection, msgType uint16, msgBuf []b
 		err = SendAPIMessage(apiConn.Connection, ONION_TUNNEL_READY, resp)
 		if err != nil {
 			logger.Error.Println("Could not send ONION_TUNNEL_READY message to " + apiConn.Connection.RemoteAddr().String() + ", attempting to send ONION_ERROR")
-			// attempting to send an API error message even though it is very likely to fail
+			// attempting to send an API error message even though it is very likely to fail as well
 			sendApiErrorMessage(apiConn.Connection, msgType, tunnelID)
 			return
 		}
@@ -87,8 +87,9 @@ func handleApiMessage(apiConn *storage.ApiConnection, msgType uint16, msgBuf []b
 		}
 	case ONION_TUNNEL_DATA:
 		tunnelID := binary.BigEndian.Uint32(msgBuf[:4])
-		if storage.ExistsTunnelApiConnection(tunnelApiConnections, tunnelID, apiConn) {
-			logger.Warning.Println("Connection " + apiConn.Connection.RemoteAddr().String() + " tried to send on unknown or disallowed tunnel, closing API connection")
+		if !storage.ExistsTunnelApiConnection(tunnelApiConnections, tunnelID, apiConn) {
+			logger.Warning.Println("Connection " + apiConn.Connection.RemoteAddr().String() + " tried to send on unknown or disallowed tunnel " + strconv.Itoa(int(tunnelID)) + ", closing API connection")
+			removeAllTunnelAPIConnections(apiConn)
 			storage.RemoveApiConnection(apiConnections, apiConn)
 			return
 		}
@@ -107,7 +108,21 @@ func handleApiMessage(apiConn *storage.ApiConnection, msgType uint16, msgBuf []b
 		}
 	default:
 		logger.Warning.Println("Got unexpected message type " + strconv.Itoa(int(msgType)) + ", terminating API connection")
+		removeAllTunnelAPIConnections(apiConn)
 		storage.RemoveApiConnection(apiConnections, apiConn)
+	}
+}
+
+func removeAllTunnelAPIConnections(apiConn *storage.ApiConnection) {
+	tunnelsToRemove := storage.RemoveApiConnectionFromAllTunnels(tunnelApiConnections, apiConn)
+	for _, v := range tunnelsToRemove {
+		logger.Info.Println("Misbehaving connection was last connection for tunnel " + strconv.Itoa(int(v)) + ", destroying the tunnel")
+		tunnelIDBuf := make([]byte, 4)
+		binary.BigEndian.PutUint32(tunnelIDBuf, v)
+		_, _, err := onionLayerHandler(ONION_TUNNEL_DESTROY, tunnelIDBuf)
+		if err != nil {
+			logger.Warning.Println("Could not remove tunnel " + strconv.Itoa(int(v)) + " from misbehaving API connection")
+		}
 	}
 }
 
@@ -118,13 +133,18 @@ func handleApiConnection(conn net.Conn) {
 		RequestClose: false,
 	}
 	defer conn.Close()
+	defer logger.Info.Println("Closing API connection to " + conn.RemoteAddr().String())
 	storage.AddApiConnection(apiConnections, apiConn)
 	for {
-		if apiConn.RequestClose {
-			return
-		}
 		msgType, msgBuf, err := ReceiveAPIMessage(conn)
 		if apiConn.RequestClose {
+			logger.Info.Println("Got request to close API connection to " + conn.RemoteAddr().String())
+			return
+		}
+		if err != nil && err.Error() == "DisconnectedError" {
+			logger.Info.Println("Removing API connection at " + apiConn.Connection.RemoteAddr().String())
+			removeAllTunnelAPIConnections(apiConn)
+			storage.RemoveApiConnection(apiConnections, apiConn)
 			return
 		}
 		if err != nil {
@@ -149,13 +169,15 @@ func listenApi(listenConn net.Listener) {
 
 func OnionTunnelIncoming(tunnelID uint32) error {
 	// everyone may interact with an incoming tunnel
-	for _, value := range storage.GetAllAPIConnections(apiConnections) {
+	conns := storage.GetAllAPIConnections(apiConnections)
+	for _, value := range conns {
+		logger.Info.Println("Adding connection " + value.Connection.RemoteAddr().String() + " as allowed for tunnel " + strconv.Itoa(int(tunnelID)))
 		storage.AddTunnelApiConnection(tunnelApiConnections, tunnelID, value)
 	}
 	// send ONION_TUNNEL_INCOMING API message to all connections
 	tunnelIDBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(tunnelIDBuf, tunnelID)
-	err := SendAllAPIConnections(ONION_TUNNEL_INCOMING, tunnelIDBuf)
+	err := sendAllAPIConnections(conns, ONION_TUNNEL_INCOMING, tunnelIDBuf)
 	if err != nil {
 		logger.Error.Println("Could not send API message to all connections for ONION_TUNNEL_INCOMING")
 		return errors.New("APIError")
@@ -196,13 +218,13 @@ func buildAPIMessage(msgType uint16, msgBuf []byte) ([]byte, error) {
 	return fullMsgBuf, nil
 }
 
-func SendAllAPIConnections(msgType uint16, msgBuf []byte) error {
+func sendAllAPIConnections(conns []*storage.ApiConnection, msgType uint16, msgBuf []byte) error {
 	fullMsgBuf, err := buildAPIMessage(msgType, msgBuf)
 	if err != nil {
 		logger.Error.Println("Could not build API message for all API connections")
 		return errors.New("InternalError")
 	}
-	storage.SendAllApiConnections(apiConnections, fullMsgBuf)
+	storage.SendAllApiConnections(conns, fullMsgBuf)
 	return nil
 }
 
@@ -224,13 +246,16 @@ func SendAPIMessage(conn net.Conn, msgType uint16, msgBuf []byte) error {
 
 // Important: This function returns a message without the size or type bytes because it automatically removes them from
 // the front of the message. All fields are therefore shifted by four bytes.
-// TODO if an API connection misbehaves disconnect it immediately
 func ReceiveAPIMessage(conn net.Conn) (rspType uint16, rspMsgBuf []byte, err error) {
 	lengthTypeBuf := make([]byte, LENGTH_OF_HEADER)
 	n, err := io.ReadFull(conn, lengthTypeBuf)
+	if err == io.EOF {
+		logger.Info.Println("API connection at " + conn.RemoteAddr().String() + " disconnected")
+		return 0, nil, errors.New("DisconnectedError")
+	}
 	if err != nil || n != LENGTH_OF_HEADER {
 		logger.Error.Println("Error reading size and type from incoming API message")
-		return 0, nil, errors.New("networkError")
+		return 0, nil, errors.New("NetworkError")
 	}
 	rspLength := binary.BigEndian.Uint16(lengthTypeBuf[:LENGTH_OF_SIZE])
 	rspType = binary.BigEndian.Uint16(lengthTypeBuf[LENGTH_OF_SIZE:LENGTH_OF_HEADER])
@@ -238,7 +263,7 @@ func ReceiveAPIMessage(conn net.Conn) (rspType uint16, rspMsgBuf []byte, err err
 	n, err = io.ReadFull(conn, rspBuf)
 	if err != nil || n != int(rspLength-LENGTH_OF_HEADER) {
 		logger.Error.Println("Error reading incoming API message of size " + strconv.Itoa(int(rspLength)) + " (read size: " + strconv.Itoa(n) + ")")
-		return 0, nil, errors.New("networkError")
+		return 0, nil, errors.New("NetworkError")
 	}
 	return rspType, rspBuf, nil
 }
@@ -248,18 +273,18 @@ func RPSQuery() (err error, peerAddress net.IP, peerAddressIsIPv6 bool, peerOnio
 	conn, err := net.Dial("tcp", config.RpsAddress)
 	if err != nil {
 		logger.Error.Println("Could not connect to RPS module at " + config.RpsAddress + " (error: " + err.Error() + ")")
-		return errors.New("networkError"), nil, false, 0, nil
+		return errors.New("NetworkError"), nil, false, 0, nil
 	}
 	defer conn.Close()
 	err = SendAPIMessage(conn, RPS_QUERY, nil)
 	if err != nil {
 		logger.Error.Println("Could not send RPS QUERY message to RPS module")
-		return errors.New("networkError"), nil, false, 0, nil
+		return errors.New("NetworkError"), nil, false, 0, nil
 	}
 	rspType, rspBuf, err := ReceiveAPIMessage(conn)
 	if err != nil {
 		logger.Error.Println("Could not receive RPS QUERY response")
-		return errors.New("networkError"), nil, false, 0, nil
+		return errors.New("NetworkError"), nil, false, 0, nil
 	}
 	// Check if response is a RPS PEER message
 	if rspType != RPS_PEER {
