@@ -94,7 +94,6 @@ func SetPacketReceiver(listeningAddress string, callback func(*net.UDPAddr, []by
 	}
 	udpconn, err := net.ListenUDP("udp", udpaddr)
 	if err != nil {
-		// defer udpconn.Close()
 		logger.Error.Println("Cannot create listening port")
 		return nil, errors.New("networkError")
 	}
@@ -104,6 +103,7 @@ func SetPacketReceiver(listeningAddress string, callback func(*net.UDPAddr, []by
 
 func listen(udpconn *net.UDPConn, callback func(*net.UDPAddr, []byte)) {
 	defer udpconn.Close()
+	defer logger.Info.Println("Closing onion UDP connection")
 	for {
 		buf := make([]byte, packetLength)
 		curLength, addr, err := udpconn.ReadFromUDP(buf)

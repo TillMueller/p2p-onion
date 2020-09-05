@@ -186,7 +186,7 @@ func OnionTunnelIncoming(tunnelID uint32) error {
 }
 
 func SendTunnelApiConnections(tunnelID uint32, msgType uint16, data []byte) error {
-	msgBuf, err := buildAPIMessage(msgType, data)
+	msgBuf, err := BuildAPIMessage(msgType, data)
 	if err != nil {
 		logger.Error.Println("Could not build message to send to all API connections of tunnel " + strconv.Itoa(int(tunnelID)))
 		return errors.New("APIError")
@@ -205,7 +205,7 @@ func Initialize() error {
 	return nil
 }
 
-func buildAPIMessage(msgType uint16, msgBuf []byte) ([]byte, error) {
+func BuildAPIMessage(msgType uint16, msgBuf []byte) ([]byte, error) {
 	totalLength := len(msgBuf) + LENGTH_OF_HEADER
 	fullMsgBuf := make([]byte, totalLength)
 	binary.BigEndian.PutUint16(fullMsgBuf[:LENGTH_OF_SIZE], uint16(totalLength))
@@ -219,7 +219,7 @@ func buildAPIMessage(msgType uint16, msgBuf []byte) ([]byte, error) {
 }
 
 func sendAllAPIConnections(conns []*storage.ApiConnection, msgType uint16, msgBuf []byte) error {
-	fullMsgBuf, err := buildAPIMessage(msgType, msgBuf)
+	fullMsgBuf, err := BuildAPIMessage(msgType, msgBuf)
 	if err != nil {
 		logger.Error.Println("Could not build API message for all API connections")
 		return errors.New("InternalError")
@@ -231,7 +231,7 @@ func sendAllAPIConnections(conns []*storage.ApiConnection, msgType uint16, msgBu
 // Important: This function takes a message without the size or type bytes because it automatically adds those to the
 // front of the message. All fields therefore need to be shifted by four bytes.
 func SendAPIMessage(conn net.Conn, msgType uint16, msgBuf []byte) error {
-	fullMsgBuf, err := buildAPIMessage(msgType, msgBuf)
+	fullMsgBuf, err := BuildAPIMessage(msgType, msgBuf)
 	if err != nil {
 		logger.Error.Println("Could not build API message for single API connection")
 		return errors.New("InternalError")

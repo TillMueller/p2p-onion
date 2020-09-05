@@ -2,15 +2,17 @@ package logger
 
 import (
 	"crypto/rand"
+	"io"
 	"log"
 	"math/big"
+	"onion/config"
 	"os"
 	"strconv"
 )
 
 var (
 	// Generate Random ID for differentiating different hosts in log file
-	logFile = initializeLogFile("onion.log")
+	logFile *os.File
 	// Info is the logger for informational messages
 	Info *log.Logger
 	// Warning is the logger for Warning messages
@@ -19,15 +21,15 @@ var (
 	Error *log.Logger
 )
 
-func init() {
-	InitializeLogger(strconv.Itoa(getRandomNumber(1000)))
+func Initialize() {
+	logFile = initializeLogFile(config.LogfileLocation)
+	initializeLogger(strconv.Itoa(getRandomNumber(1000)))
 }
 
 func initializeLogFile(name string) *os.File {
 	file, err := os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		// do something
-		return nil
+		panic(err)
 	}
 	return file
 }
@@ -40,8 +42,10 @@ func getRandomNumber(max int) int {
 	return int(nBig.Int64())
 }
 
-func InitializeLogger(name string) {
-	Info = log.New(logFile, "[" + name + "] INFO: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-	Warning = log.New(logFile, "[" + name +  "] WARNING: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-	Error = log.New(logFile, "[" + name +  "] ERROR: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+func initializeLogger(name string) {
+	warningMultiWriter := io.MultiWriter(os.Stdout, logFile)
+	errorMultiWriter := io.MultiWriter(os.Stderr, logFile)
+	Info = log.New(logFile, "["+name+"] INFO: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	Warning = log.New(warningMultiWriter, "["+name+"] WARNING: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	Error = log.New(errorMultiWriter, "["+name+"] ERROR: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
 }
