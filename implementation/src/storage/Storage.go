@@ -288,7 +288,6 @@ func AddPeerTPort(peerTPortsMap *peerTPorts, key string, value uint32) error {
 			}
 		}
 		if !valueAlreadyExists {
-			// TODO Test adding multiple values to one list using AddPeerTPort
 			lst.PushBack(value)
 		} else {
 			return errors.New("ValueAlreadyExists")

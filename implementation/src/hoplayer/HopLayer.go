@@ -20,7 +20,6 @@ const packetLength = 1232 // == 1280 (v6 minimum MTU) - 40 (v6 header) - 8 (udp 
 const DH_MSGCODE = 0x0
 const DATA_MSGCODE = 0x1 // set if contained payload is data. If not set, payload is part of a Diffie-Hellman Handshake
 const RST_MSGCODE = 0x2
-// TODO move timeout to config?
 const timeout = 2 * time.Second
 
 var receivingMutex sync.Mutex

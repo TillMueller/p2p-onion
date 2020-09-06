@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	// TODO move timeouts to config?
 	RESP_TIMEOUT = 5 * time.Second
 	// if the latency between the tunnel initiator and destination is > TUNNEL_INACTIVITY_TIMEOUT / 2 the tunnel will
 	// always fail. If you have high-latency connections increase this as required

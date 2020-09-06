@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoadValidConfig(t *testing.T) {
-	err := loadConfig("config.ini")
+	err := LoadConfig("config.ini")
 	if err != nil {
 		t.Errorf("Could not load config")
 	}

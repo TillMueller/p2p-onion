@@ -18,7 +18,6 @@ const (
 	LENGTH_OF_SIZE       = 2
 	LENGTH_OF_TYPE       = 2
 	LENGTH_OF_HEADER     = LENGTH_OF_SIZE + LENGTH_OF_TYPE
-	// TODO move these two to config?
 	COVER_CHUNK_SIZE     = 1000
 	COVER_SLEEP_DURATION = 30 * time.Millisecond
 
