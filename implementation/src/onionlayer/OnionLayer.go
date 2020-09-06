@@ -343,10 +343,8 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 		logger.Debug.Println("Created new forwarder with identifier " + forwarderIdentifier)
 		go watchForwarder(newForwarder, forwarderIdentifier)
 		// generate KEYXCHGRESP
-		logger.Debug.Println("LOCKING sendMutex")
 		sendMutex.Lock()
 		defer sendMutex.Unlock()
-		defer logger.Debug.Println("UNLOCKING sendMutex")
 		respBuf := make([]byte, 5)
 		binary.BigEndian.PutUint32(respBuf[0:4], newForwarder.SendingSeqNum)
 		newForwarder.SendingSeqNum++
@@ -576,6 +574,8 @@ func handleIncomingPacket(addr *net.UDPAddr, data []byte) {
 			case MSG_FORWARD:
 				// add our tPort and send along to next hop
 				logger.Debug.Println("Sending forward in tunnel data from " + forwarderIdentifier + " (initial length " + strconv.Itoa(len(data[4:])) + ") of length " + strconv.Itoa(len(decryptedMsg)))
+				sendMutex.Lock()
+				defer sendMutex.Unlock()
 				err := sendMessage(forwarder, true, decryptedMsg[1:])
 				if err != nil {
 					logger.Error.Println("Could not forward data from " + forwarderIdentifier)
@@ -848,6 +848,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 				continue
 			}
 			msgBuf := make([]byte, 5)
+			sendMutex.Lock()
 			binary.BigEndian.PutUint32(msgBuf[0:4], curPeer.SendingSeqNum)
 			curPeer.SendingSeqNum++
 			msgBuf[4] = MSG_KEYXCHG
@@ -861,6 +862,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 			curTunnel.ForwarderIdentifier = forwarderIdentifier
 			logger.Debug.Println("Created new forwarder with identifier " + forwarderIdentifier)
 			err = sendMessage(sourceForwarder, true, msgBuf)
+			sendMutex.Unlock()
 			if err != nil {
 				logger.Warning.Println("Could not send DH keyexchange to peer " + peerAddressString)
 				continue

@@ -48,7 +48,7 @@ func handleIncomingAPIMessages(conn net.Conn) {
 			tunnelIDBuf := make([]byte, 4)
 			binary.BigEndian.PutUint32(tunnelIDBuf, tunnelID)
 			t.Log(apiConnString + "Sending reply backwards through tunnel")
-			err = api.SendAPIMessage(conn, api.ONION_TUNNEL_DATA, append(tunnelIDBuf, []byte("I am sending a message through some tunnels")...))
+			err = api.SendAPIMessage(conn, api.ONION_TUNNEL_DATA, append(tunnelIDBuf, []byte("This data is sent backwards through tunnel " + strconv.Itoa(int(tunnelID)))...))
 			if err != nil {
 				t.Errorf(apiConnString + "Could not send api message")
 				return
@@ -59,7 +59,16 @@ func handleIncomingAPIMessages(conn net.Conn) {
 		case api.ONION_TUNNEL_READY:
 			tunnelID := binary.BigEndian.Uint32(msgBuf[:4])
 			t.Log(apiConnString + "Tunnel is ready: " + strconv.Itoa(int(tunnelID)))
-			time.Sleep(5 * time.Second)
+			time.Sleep(3 * time.Second)
+			tunnelIDBuf := make([]byte, 4)
+			binary.BigEndian.PutUint32(tunnelIDBuf, tunnelID)
+			t.Log(apiConnString + "Sending message forward through tunnel")
+			err = api.SendAPIMessage(conn, api.ONION_TUNNEL_DATA, append(tunnelIDBuf, []byte("This data is sent forward through tunnel " + strconv.Itoa(int(tunnelID)))...))
+			if err != nil {
+				t.Errorf(apiConnString + "Could not send api message")
+				return
+			}
+			time.Sleep(3 * time.Second)
 			err := api.SendAPIMessage(conn, api.ONION_TUNNEL_DESTROY, msgBuf[:4])
 			if err != nil {
 				t.Errorf(apiConnString + "Could not send api message")
