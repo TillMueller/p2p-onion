@@ -20,6 +20,16 @@ import "onion/testing_setup"
 var killPeers = false
 var testingLogfile = "testing_setup/testing.log"
 
+func TestMain(m *testing.M) {
+	// remove testing log file
+	_ = os.Remove(testingLogfile)
+	// remove log files and start peers in separate instances
+	for i := 0; i < 5; i++ {
+		removeLogFile(i)
+	}
+	m.Run()
+}
+
 func runAndPrintCommand(cmd string, wg *sync.WaitGroup, t *testing.T) {
 	wg.Add(1)
 	prog := exec.Command("bash", "-c", cmd)
@@ -54,32 +64,25 @@ func runAndPrintCommand(cmd string, wg *sync.WaitGroup, t *testing.T) {
 			}
 			_ = syscall.Kill(-pgid, syscall.SIGTERM)
 			wg.Done()
+			return
 		}
 	}
 }
 
-func removeLogFile(n int, t *testing.T) {
-	err := os.Remove("testing_setup/peer" + strconv.Itoa(n) + "/onion.log")
-	if err != nil {
-		t.Errorf("Could not remove log file for peer " + strconv.Itoa(n))
-		return
-	}
+func removeLogFile(n int) {
+	_ = os.Remove("testing_setup/peer" + strconv.Itoa(n) + "/onion.log")
 }
 
-func cleanupAndExit(wg *sync.WaitGroup) {
+func cleanup(wg *sync.WaitGroup) {
 	killPeers = true
 	wg.Wait()
+	killPeers = false
+	// let API connections finish
+	time.Sleep(3 * time.Second)
 }
 
 func initializeTest(wg *sync.WaitGroup, t *testing.T) {
-	// remove testing log file
-	err := os.Remove(testingLogfile)
-	if err != nil {
-		t.Errorf("Could not remove testing logfile: " + testingLogfile)
-	}
-	// remove log files and start peers in separate instances
 	for i := 0; i < 5; i++ {
-		removeLogFile(i, t)
 		go runAndPrintCommand("go run main.go -c testing_setup/peer"+strconv.Itoa(i)+"/config.ini", wg, t)
 	}
 	config.LogfileLocation = testingLogfile
@@ -94,7 +97,7 @@ func initializeTest(wg *sync.WaitGroup, t *testing.T) {
 func TestBuildTunnel(t *testing.T) {
 	var wg sync.WaitGroup
 	initializeTest(&wg, t)
-	defer cleanupAndExit(&wg)
+	defer cleanup(&wg)
 	// start client on initiator side
 	go testing_setup.InitializeClient("localhost:65510")
 	// start client on receiver side
@@ -111,7 +114,7 @@ func TestBuildTunnel(t *testing.T) {
 func TestMultipleTunnels(t *testing.T) {
 	var wg sync.WaitGroup
 	initializeTest(&wg, t)
-	defer cleanupAndExit(&wg)
+	defer cleanup(&wg)
 	// start client on initiator side
 	go testing_setup.InitializeClient("localhost:65510")
 	// start client on receiver side
@@ -136,7 +139,7 @@ func TestMultipleTunnels(t *testing.T) {
 func TestCoverTraffic(t *testing.T) {
 	var wg sync.WaitGroup
 	initializeTest(&wg, t)
-	defer cleanupAndExit(&wg)
+	defer cleanup(&wg)
 	// start client on initiator side
 	go testing_setup.InitializeClient("localhost:65510")
 	// start client on receiver side

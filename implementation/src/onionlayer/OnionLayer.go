@@ -815,7 +815,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 				}
 			}
 			if skipPeer {
-				logger.Warning.Println("Peer solicited from RPS is already part of the tunnel, the destination or ourselves, skipping: " + peerAddressString)
+				logger.Info.Println("Peer solicited from RPS is already part of the tunnel, the destination or ourselves, skipping: " + peerAddressString)
 				continue
 			}
 		}

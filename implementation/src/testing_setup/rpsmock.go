@@ -65,7 +65,11 @@ func getPeerDetails(n int) []byte {
 }
 
 func serveRPS() {
-	listenConn, _ := net.Listen("tcp", addressString)
+	listenConn, err := net.Listen("tcp", addressString)
+	if err != nil {
+		t.Log("Assuming mock RPS is already running, skipping")
+		return
+	}
 	defer listenConn.Close()
 	counter := 0
 	for {
