@@ -568,7 +568,7 @@ func ExistsTunnelApiConnection(tunnelApiConnectionsMap *TunnelApiConnections, ke
 	defer tunnelApiConnectionsMap.mutex.Unlock()
 	tunnelApiConnection, exists := tunnelApiConnectionsMap.data[key]
 	if !exists {
-		logger.Info.Println("Trying to check if API connection exists for unknown tunnel")
+		logger.Debug.Println("Trying to check if API connection exists for unknown tunnel")
 		return false
 	}
 	for cur := tunnelApiConnection.Front(); cur != nil; cur = cur.Next() {

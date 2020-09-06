@@ -14,6 +14,8 @@ import (
 var (
 	// Generate Random ID for differentiating different hosts in log file
 	logFile *os.File
+	// Debug is the logger for debugging messages
+	Debug *log.Logger
 	// Info is the logger for informational messages
 	Info *log.Logger
 	// Warning is the logger for Warning messages
@@ -46,13 +48,17 @@ func getRandomNumber(max int) int {
 func initializeLogger(name string) {
 	warningMultiWriter := io.MultiWriter(os.Stdout, logFile)
 	errorMultiWriter := io.MultiWriter(os.Stderr, logFile)
-	var infoLogDest io.Writer
-	if config.LogInfo {
-		infoLogDest = logFile
-	} else {
+	debugLogDest := io.Writer(logFile)
+	if !config.LogDebug {
+		debugLogDest = ioutil.Discard
+	}
+	infoLogDest := io.Writer(logFile)
+	if !config.LogInfo {
 		infoLogDest = ioutil.Discard
 	}
-	Info = log.New(infoLogDest, "["+name+"] INFO: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-	Warning = log.New(warningMultiWriter, "["+name+"] WARNING: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-	Error = log.New(errorMultiWriter, "["+name+"] ERROR: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	loggingDetails := log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile
+	Debug = log.New(debugLogDest, "["+name+"] DEBUG: ", loggingDetails)
+	Info = log.New(infoLogDest, "["+name+"] INFO: ", loggingDetails)
+	Warning = log.New(warningMultiWriter, "["+name+"] WARNING: ", loggingDetails)
+	Error = log.New(errorMultiWriter, "["+name+"] ERROR: ", loggingDetails)
 }

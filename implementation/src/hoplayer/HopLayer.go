@@ -78,7 +78,7 @@ func clearPeerInformation(addrStr string) {
 	storage.DeleteSymmetricKeysValue(keyMap, addrStr)
 	storage.DeleteSequenceNumbersValue(sendingSeqNums, addrStr)
 	storage.DeleteSequenceNumbersValue(receivingSeqNums, addrStr)
-	logger.Info.Println("Removed all local information for peer: " + addrStr)
+	logger.Debug.Println("Removed all local information for peer: " + addrStr)
 }
 
 // SetPacketReceiver subscribes a callback function to a specific UDP address
@@ -132,7 +132,7 @@ func handleDHExchange(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		logger.Warning.Println("Could not generate address string from UDP address")
 		return
 	}
-	logger.Info.Println("Received public key from " + addrString + " (length " + strconv.Itoa(len(peerPublicKey)) + ")")
+	logger.Debug.Println("Received public key from " + addrString + " (length " + strconv.Itoa(len(peerPublicKey)) + ")")
 	value, exists := storage.GetKeyPairsValue(openDHs, addrString)
 	if exists {
 		sharedSecret, err := dh.DeriveSharedSecret(value.PrivateKey, peerPublicKey)
@@ -180,12 +180,12 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 
 	//upon receiving a RST_MSGCODE, delete all local state of hoplayer connection.
 	if data[0] == RST_MSGCODE {
-		logger.Info.Println("Got reset message from peer: " + addrStr)
+		logger.Debug.Println("Got reset message from peer: " + addrStr)
 		clearPeerInformation(addrStr)
 		return
 	}
 	if data[0] == DH_MSGCODE {
-		logger.Info.Println("Got DH keyexchange from " + addrStr)
+		logger.Debug.Println("Got DH keyexchange from " + addrStr)
 		handleDHExchange(udpconn, addr, data)
 		return
 	}
@@ -230,7 +230,7 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 		logger.Warning.Println("Some sequence numbers were missed, possibly due to lost packets. Expected sequence number: " + strconv.Itoa(curSeqNum) + "; received sequence number: " + strconv.Itoa(receivedSeqNum) + " from peer " + addrStr)
 	}
 	storage.SetSequenceNumbersValue(receivingSeqNums, addrStr, receivedSeqNum+1)
-	logger.Info.Println("Got message (length " + strconv.Itoa(int(size)) + ")")
+	logger.Debug.Println("Got message (length " + strconv.Itoa(int(size)) + ")")
 	callback(addr, plaintext[6:size+6])
 	return
 }
@@ -255,7 +255,7 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 	key, exists := storage.GetSymmetricKeysValue(keyMap, addrString)
 	if !exists {
 		// We haven't established a shared secret, so we must perform DH
-		logger.Info.Println("Did not find existing key for " + addr + ". Attempting to create one via DH.")
+		logger.Debug.Println("Did not find existing key for " + addr + ". Attempting to create one via DH.")
 		privateKey, publicKey, err := dh.GenKeyPair()
 		if err != nil {
 			logger.Error.Println("Could not generate keypair")
@@ -268,14 +268,14 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 			logger.Error.Println("Could not pad packet")
 			return errors.New("internalError")
 		}
-		logger.Info.Println("Sending public key to " + addrString + " (length " + strconv.Itoa(len(publicKey)) + ")")
+		logger.Debug.Println("Sending public key to " + addrString + " (length " + strconv.Itoa(len(publicKey)) + ")")
 		_, err = sendingUDPConn.WriteToUDP(packet[:], receiverAddress)
 		if err != nil {
 			logger.Error.Println("Could not send public key to " + addrString)
 			return errors.New("networkError")
 		}
 		// wait until DH is done
-		logger.Info.Println("Waiting for DH with peer: " + addrString)
+		logger.Debug.Println("Waiting for DH with peer: " + addrString)
 		key, exists = storage.WaitForSymmetricKeysValue(keyMap, addrString, timeout)
 		if !exists {
 			logger.Warning.Println("HopLayer keyexchange timed out, aborting")
@@ -292,7 +292,7 @@ func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
 		logger.Error.Println("Didn't find sequence number for given address: " + addrString)
 		return errors.New("internalError")
 	}
-	logger.Info.Println("Sending out packet to " + addrString + " with sequence number " + strconv.Itoa(seqNum))
+	logger.Debug.Println("Sending out packet to " + addrString + " with sequence number " + strconv.Itoa(seqNum))
 	binary.BigEndian.PutUint32(seqBytes, uint32(seqNum))
 	headerBytes := append(sizeBytes, seqBytes...)
 	data = append(headerBytes, data...)

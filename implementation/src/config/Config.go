@@ -33,9 +33,49 @@ var (
 	ApiAddress        string
 	LogfileLocation   = default_logfile_location
 	LogInfo           bool
+	LogDebug          bool
 )
 
-// TODO add logfile location to config
+func readBoolFromConfig(section *ini.Section, key string, defaultValue bool) bool {
+	if section.HasKey(key) {
+		switch section.Key(key).String() {
+		case "yes":
+			return true
+		case "no":
+			return false
+		default:
+			writeError("Configuration parameter " + key + " is malformed, using default: " + strconv.FormatBool(defaultValue))
+			return defaultValue
+		}
+	} else {
+		writeError("Configuration section onion does not contain parameter " + key + ", using default: " + strconv.FormatBool(defaultValue))
+		return defaultValue
+	}
+}
+
+func readStringFromConfig(section *ini.Section, key string, defaultValue string) string {
+	if section.HasKey(key) {
+		return section.Key(key).String()
+	} else {
+		writeError("Configuration section onion does not contain parameter " + key + ", using default: " + defaultValue)
+		return defaultValue
+	}
+}
+
+func readIntFromConfig(section *ini.Section, key string, defaultValue int) int {
+	if section.HasKey(key) {
+		tmpValue, err := strconv.Atoi(section.Key(key).String())
+		if err != nil {
+			writeError("Configuration parameter " + key + " is malformed, using default: " + strconv.Itoa(defaultValue))
+			return defaultValue
+		} else {
+			return tmpValue
+		}
+	} else {
+		writeError("Configuration section onion does not contain parameter " + key + ", using default: " + strconv.Itoa(defaultValue))
+		return defaultValue
+	}
+}
 
 func loadPrivateKeyFile(hostkeyLocation string) error {
 	keyFileContent, err := ioutil.ReadFile(hostkeyLocation)
@@ -64,13 +104,9 @@ func writeError(msg string) {
 }
 
 func LoadConfig(path string) error {
-	// TODO maybe we need to check where the path is relative to
 	config, err := ini.Load(path)
 	if err != nil {
-		_, err = fmt.Fprintln(os.Stderr, "Could not load configuration file "+path)
-		if err != nil {
-			panic(err)
-		}
+		writeError("Could not load configuration file "+path)
 		return errors.New("InputOutputError")
 	}
 	section, err := config.GetSection("onion")
@@ -78,94 +114,31 @@ func LoadConfig(path string) error {
 		writeError("Configuration file does not contain an onion section")
 		return errors.New("ConfigurationError")
 	}
-	if section.HasKey("p2p_port") {
-		tmpP2Pport, err := strconv.Atoi(section.Key("p2p_port").String())
-		if err != nil {
-			writeError("Configuration parameter p2p_port is malformed, using default: " + strconv.Itoa(default_p2p_port))
-			P2p_port = default_p2p_port
-		} else {
-			P2p_port = tmpP2Pport
-		}
-	} else {
-		writeError("Configuration section onion does not contain parameter p2p_port, using default: " + strconv.Itoa(default_p2p_port))
-		P2p_port = default_p2p_port
-	}
-
-	if section.HasKey("p2p_hostname") {
-		P2p_hostname = section.Key("p2p_hostname").String()
-	} else {
-		writeError("Configuration section onion does not contain parameter p2p_hostname, using default: " + default_p2p_hostname)
-		P2p_hostname = default_p2p_hostname
-	}
-
-	if section.HasKey("intermediate_hops") {
-		tmpIntermediateHops, err := strconv.Atoi(section.Key("intermediate_hops").String())
-		if err != nil {
-			writeError("Configuration parameter intermediate_hops is malformed, using default: " + strconv.Itoa(default_intermediate_hops))
-			Intermediate_hops = default_intermediate_hops
-		} else {
-			Intermediate_hops = tmpIntermediateHops
-		}
-	} else {
-		writeError("Configuration section onion does not contain parameter intermediate_hops, using default: " + strconv.Itoa(default_intermediate_hops))
-		Intermediate_hops = default_intermediate_hops
-	}
+	P2p_port = readIntFromConfig(section, "p2p_port", default_p2p_port)
+	P2p_hostname = readStringFromConfig(section, "p2p_hostname", default_p2p_hostname)
+	Intermediate_hops = readIntFromConfig(section, "intermediate_hops", default_intermediate_hops)
 	if Intermediate_hops < minimum_intermediate_hops {
 		writeError("Configuration defines insecure value for minimum intermediate hops, has to be at least " + strconv.Itoa(minimum_intermediate_hops) + ". Using default: " + strconv.Itoa(default_intermediate_hops))
 		Intermediate_hops = default_intermediate_hops
 	}
 
-	hostkeyLocation := default_hostkey_location
-	if section.HasKey("hostkey_location") {
-		hostkeyLocation = section.Key("hostkey_location").String()
-	} else {
-		writeError("Configuration section onion does not contain parameter hostkey_location, using default: " + default_hostkey_location)
-	}
+	hostkeyLocation := readStringFromConfig(section, "hostkey_location", default_hostkey_location)
 	if loadPrivateKeyFile(hostkeyLocation) != nil {
 		writeError("Could not load private key file: " + hostkeyLocation)
 		return errors.New("ConfigurationError")
 	}
 
-	if section.HasKey("api_address") {
-		ApiAddress = section.Key("api_address").String()
-	} else {
-		writeError("Configuration section onion does not contain parameter api_address, using default: " + default_api_address)
-		ApiAddress = default_api_address
-	}
-
-	if section.HasKey("logfile_location") {
-		LogfileLocation = section.Key("logfile_location").String()
-	} else {
-		writeError("Configuration section onion does not contain parameter logfile_location, using default: " + default_logfile_location)
-		LogfileLocation = default_logfile_location
-	}
-
-	if section.HasKey("log_info") {
-		switch section.Key("log_info").String() {
-		case "yes":
-			LogInfo = true
-		case "no":
-			LogInfo = false
-		default:
-			writeError("Configuration parameter log_info is malformed, using default: true")
-			LogInfo = true
-		}
-	} else {
-		writeError("Configuration section onion does not contain parameter logfile_location, using default: true")
-		LogInfo = true
-	}
+	ApiAddress = readStringFromConfig(section, "api_address", default_api_address)
+	LogfileLocation = readStringFromConfig(section, "logfile_location", default_logfile_location)
+	LogInfo = readBoolFromConfig(section, "log_info", true)
+	LogDebug = readBoolFromConfig(section, "log_debug", true)
 
 	rpsSection, err := config.GetSection("rps")
 	if err != nil {
 		writeError("Configuration does not contain RPS section, using default RPS api_address: " + default_rps_address)
 		RpsAddress = default_rps_address
 	} else {
-		if rpsSection.HasKey("api_address") {
-			RpsAddress = rpsSection.Key("api_address").String()
-		} else {
-			writeError("Configuration does not contain api_address in RPS section, using default value: " + default_rps_address)
-			RpsAddress = default_rps_address
-		}
+		RpsAddress = readStringFromConfig(rpsSection, "api_address", default_rps_address)
 	}
 	return nil
 }

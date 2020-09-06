@@ -43,6 +43,6 @@ func DeriveSharedSecret(privateKeyBytes []byte, publicKeyBytes []byte) ([]byte, 
 		logger.Error.Println("Could not derive shared secret")
 		return nil, errors.New("internalError")
 	}
-	logger.Info.Println("Derived shared secret of length " + strconv.Itoa(len(sharedSecret)))
+	logger.Debug.Println("Derived shared secret of length " + strconv.Itoa(len(sharedSecret)))
 	return sharedSecret, nil
 }

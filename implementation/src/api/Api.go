@@ -138,11 +138,11 @@ func handleApiConnection(conn net.Conn) {
 	for {
 		msgType, msgBuf, err := ReceiveAPIMessage(conn)
 		if apiConn.RequestClose {
-			logger.Info.Println("Got request to close API connection to " + conn.RemoteAddr().String())
+			logger.Debug.Println("Got request to close API connection to " + conn.RemoteAddr().String())
 			return
 		}
 		if err != nil && err.Error() == "DisconnectedError" {
-			logger.Info.Println("Removing API connection at " + apiConn.Connection.RemoteAddr().String())
+			logger.Debug.Println("Removing API connection at " + apiConn.Connection.RemoteAddr().String())
 			removeAllTunnelAPIConnections(apiConn)
 			storage.RemoveApiConnection(apiConnections, apiConn)
 			return
@@ -171,7 +171,7 @@ func OnionTunnelIncoming(tunnelID uint32) error {
 	// everyone may interact with an incoming tunnel
 	conns := storage.GetAllAPIConnections(apiConnections)
 	for _, value := range conns {
-		logger.Info.Println("Adding connection " + value.Connection.RemoteAddr().String() + " as allowed for tunnel " + strconv.Itoa(int(tunnelID)))
+		logger.Debug.Println("Adding connection " + value.Connection.RemoteAddr().String() + " as allowed for tunnel " + strconv.Itoa(int(tunnelID)))
 		storage.AddTunnelApiConnection(tunnelApiConnections, tunnelID, value)
 	}
 	// send ONION_TUNNEL_INCOMING API message to all connections
@@ -269,7 +269,7 @@ func ReceiveAPIMessage(conn net.Conn) (rspType uint16, rspMsgBuf []byte, err err
 }
 
 func RPSQuery() (err error, peerAddress net.IP, peerAddressIsIPv6 bool, peerOnionPort uint16, peerHostkey *rsa.PublicKey) {
-	logger.Info.Println("Soliciting random peer")
+	logger.Debug.Println("Soliciting random peer")
 	conn, err := net.Dial("tcp", config.RpsAddress)
 	if err != nil {
 		logger.Error.Println("Could not connect to RPS module at " + config.RpsAddress + " (error: " + err.Error() + ")")
