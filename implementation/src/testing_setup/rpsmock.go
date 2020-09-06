@@ -1,8 +1,6 @@
 package testing_setup
 
 import (
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/binary"
 	"io"
 	"io/ioutil"
@@ -11,7 +9,6 @@ import (
 	"testing"
 )
 
-var destinationPeer = 4
 var addressString = "localhost:65530"
 var t *testing.T
 
@@ -25,14 +22,6 @@ func getHostKey(n int) []byte {
 		t.Errorf(err.Error())
 	}
 	return pubkey
-}
-
-func destinationKey() *rsa.PublicKey {
-	publickey, err := x509.ParsePKCS1PublicKey(getHostKey(destinationPeer))
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-	return publickey
 }
 
 func getRspHeader(n int) []byte {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net"
 	"onion/config"
 	"onion/logger"
 	"os"
@@ -17,6 +18,7 @@ import (
 import "onion/testing_setup"
 
 var killPeers = false
+var testingLogfile = "testing_setup/testing.log"
 
 func runAndPrintCommand(cmd string, wg *sync.WaitGroup, t *testing.T) {
 	wg.Add(1)
@@ -71,16 +73,16 @@ func cleanupAndExit(wg *sync.WaitGroup) {
 
 func initializeTest(wg *sync.WaitGroup, t *testing.T) {
 	// remove testing log file
-	err := os.Remove("testing.log")
+	err := os.Remove(testingLogfile)
 	if err != nil {
-		t.Errorf("Could not remove testing logfile (testing.log)")
+		t.Errorf("Could not remove testing logfile: " + testingLogfile)
 	}
 	// remove log files and start peers in separate instances
 	for i := 0; i < 5; i++ {
 		removeLogFile(i, t)
 		go runAndPrintCommand("go run main.go -c testing_setup/peer"+strconv.Itoa(i)+"/config.ini", wg, t)
 	}
-	config.LogfileLocation = "testing.log"
+	config.LogfileLocation = testingLogfile
 	// start our logger
 	logger.Initialize()
 	// start mocked RPS module
@@ -91,7 +93,6 @@ func initializeTest(wg *sync.WaitGroup, t *testing.T) {
 
 func TestBuildTunnel(t *testing.T) {
 	var wg sync.WaitGroup
-
 	initializeTest(&wg, t)
 	defer cleanupAndExit(&wg)
 	// start client on initiator side
@@ -103,14 +104,39 @@ func TestBuildTunnel(t *testing.T) {
 	// let them start up
 	time.Sleep(time.Second)
 	// send build tunnel command
-	testing_setup.BuildTunnelTest("localhost:65510")
+	testing_setup.BuildTunnelTest("localhost:65510", net.IPv4(127, 0, 0, 1), 65508, 4)
+	time.Sleep(20 * time.Second)
+}
+
+func TestMultipleTunnels(t *testing.T) {
+	var wg sync.WaitGroup
+	initializeTest(&wg, t)
+	defer cleanupAndExit(&wg)
+	// start client on initiator side
+	go testing_setup.InitializeClient("localhost:65510")
+	// start client on receiver side
+	go testing_setup.InitializeClient("localhost:65514")
+	// start client somewhere in the middle (no data should arrive there)
+	go testing_setup.InitializeClient("localhost:65512")
+	// let them start up
+	time.Sleep(time.Second)
+	// send build tunnel command
+	testing_setup.BuildTunnelTest("localhost:65510", net.IPv4(127, 0, 0, 1), 65508, 4)
+	// let the tunnel build
+	time.Sleep(3 * time.Second)
+	// build second tunnel with same destination
+	testing_setup.BuildTunnelTest("localhost:65510", net.IPv4(127, 0, 0, 1), 65508, 4)
+	// let the tunnel build
+	time.Sleep(3 * time.Second)
+	// build third tunnel the other way around
+	testing_setup.BuildTunnelTest("localhost:65514", net.IPv4(127, 0, 0, 1), 65504, 0)
 	time.Sleep(20 * time.Second)
 }
 
 func TestCoverTraffic(t *testing.T) {
 	var wg sync.WaitGroup
-	defer cleanupAndExit(&wg)
 	initializeTest(&wg, t)
+	defer cleanupAndExit(&wg)
 	// start client on initiator side
 	go testing_setup.InitializeClient("localhost:65510")
 	// start client on receiver side

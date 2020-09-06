@@ -101,6 +101,14 @@ func handleAPIRequest(msgType uint16, data []byte) (uint32, []byte, error) {
 		logger.Debug.Println("Got ONION_COVER, building tunnel")
 		coverSize := int(binary.BigEndian.Uint16(data[:2]))
 		err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey := api.RPSQuery()
+		localPeer := net.ParseIP(config.P2p_hostname)
+		localPeerAddress := peerAddressToString(localPeer, localPeer.To4() == nil, uint16(config.P2p_port))
+		skipPeer := peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort) == localPeerAddress
+		for skipPeer {
+			err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey = api.RPSQuery()
+			skipPeer = peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort) == localPeerAddress
+			logger.Warning.Println("Destination peer solicited for ONION_COVER is ourselves, soliciting new one")
+		}
 		if err != nil {
 			logger.Error.Println("Could not solicit random peer for ONION_COVER")
 			return 0, nil, errors.New("APIError")
@@ -205,7 +213,7 @@ func watchForwarder(forwarder *storage.Forwarder, forwarderIdentifier string) {
 		if timeSinceLastMsg > TUNNEL_INACTIVITY_TIMEOUT {
 			logString := "Tunnel timed out after " + strconv.FormatFloat(timeSinceLastMsg.Seconds(), 'f', 0, 64) + " seconds"
 			if forwarder.TType == storage.TUNNEL_TYPE_HOP {
-				logger.Info.Println(logString)
+				logger.Debug.Println(logString)
 			} else {
 				logger.Warning.Println(logString)
 			}
@@ -748,6 +756,8 @@ func sendIntoTunnel(tunnelID uint32, data []byte, skipLast bool) error {
 func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPort uint16, finalHopHostKey *rsa.PublicKey) (tunnelID uint32, err error) {
 	tunnelID, err = generateAndClaimUnusedTPort(LOCAL_FORWARDER)
 	destinationPeerAddress := peerAddressToString(finalHopAddress, finalHopAddressIsIPv6, finalHopPort)
+	localPeer := net.ParseIP(config.P2p_hostname)
+	localPeerAddress := peerAddressToString(localPeer, localPeer.To4() == nil, uint16(config.P2p_port))
 
 	sourceForwarder := &storage.Forwarder{
 		NextHop:         nil,
@@ -794,7 +804,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 				continue
 			}
 			peerAddressString = peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort)
-			skipPeer := peerAddressString == destinationPeerAddress
+			skipPeer := (peerAddressString == destinationPeerAddress) || (peerAddressString == localPeerAddress)
 			for cur := curTunnel.Peers.Front(); !skipPeer && cur != nil; cur = cur.Next() {
 				curHop, typeCheck := cur.Value.(*storage.OnionPeer)
 				if !typeCheck {
@@ -806,7 +816,7 @@ func BuildTunnel(finalHopAddress net.IP, finalHopAddressIsIPv6 bool, finalHopPor
 				}
 			}
 			if skipPeer {
-				logger.Warning.Println("Peer solicited from RPS is already part of the tunnel or the destination, skipping: " + peerAddressString)
+				logger.Warning.Println("Peer solicited from RPS is already part of the tunnel, the destination or ourselves, skipping: " + peerAddressString)
 				continue
 			}
 		}

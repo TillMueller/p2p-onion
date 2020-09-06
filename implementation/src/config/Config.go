@@ -106,7 +106,6 @@ func writeError(msg string) {
 func LoadConfig(path string) error {
 	config, err := ini.Load(path)
 	if err != nil {
-		writeError("Could not load configuration file "+path)
 		return errors.New("InputOutputError")
 	}
 	section, err := config.GetSection("onion")

@@ -1,7 +1,6 @@
 package testing_setup
 
 import (
-	"bytes"
 	"encoding/binary"
 	"net"
 	"onion/api"
@@ -60,9 +59,6 @@ func handleIncomingAPIMessages(conn net.Conn) {
 		case api.ONION_TUNNEL_READY:
 			tunnelID := binary.BigEndian.Uint32(msgBuf[:4])
 			t.Log(apiConnString + "Tunnel is ready: " + strconv.Itoa(int(tunnelID)))
-			if !bytes.Equal(msgBuf[4:], getHostKey(destinationPeer)) {
-				t.Errorf(apiConnString + "Got wrong hostkey back")
-			}
 			time.Sleep(5 * time.Second)
 			err := api.SendAPIMessage(conn, api.ONION_TUNNEL_DESTROY, msgBuf[:4])
 			if err != nil {
@@ -74,7 +70,7 @@ func handleIncomingAPIMessages(conn net.Conn) {
 	}
 }
 
-func BuildTunnelTest(apiAddress string) {
+func BuildTunnelTest(apiAddress string, address net.IP, port uint16, hostId int) {
 	conns.mutex.Lock()
 	conn := conns.data[apiAddress]
 	conns.mutex.Unlock()
@@ -85,9 +81,9 @@ func BuildTunnelTest(apiAddress string) {
 	}
 	msgBuf := make([]byte, 4)
 	binary.BigEndian.PutUint16(msgBuf[:2], 0)
-	binary.BigEndian.PutUint16(msgBuf[2:4], 65508)
-	msgBuf = append(msgBuf, net.IPv4(127, 0, 0, 1).To4()...)
-	msgBuf = append(msgBuf, getHostKey(4)...)
+	binary.BigEndian.PutUint16(msgBuf[2:4], port)
+	msgBuf = append(msgBuf, address.To4()...)
+	msgBuf = append(msgBuf, getHostKey(hostId)...)
 	msg, err := api.BuildAPIMessage(api.ONION_TUNNEL_BUILD, msgBuf)
 	if err != nil {
 		t.Errorf(apiConnString + "Could not build API message")
