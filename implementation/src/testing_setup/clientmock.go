@@ -74,7 +74,7 @@ func handleIncomingAPIMessages(conn net.Conn) {
 				t.Errorf(apiConnString + "Could not send api message")
 			}
 		case api.ONION_ERROR:
-			t.Log(apiConnString + "Got ONION_ERROR for tunnel ID " + strconv.Itoa(int(binary.BigEndian.Uint32(msgBuf[:4]))))
+			t.Errorf(apiConnString + "Got ONION_ERROR for tunnel ID " + strconv.Itoa(int(binary.BigEndian.Uint32(msgBuf[:4]))))
 		}
 	}
 }

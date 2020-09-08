@@ -100,17 +100,21 @@ func handleAPIRequest(msgType uint16, data []byte) (uint32, []byte, error) {
 		logger.Debug.Println("Got ONION_COVER, building tunnel")
 		coverSize := int(binary.BigEndian.Uint16(data[:2]))
 		err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey := api.RPSQuery()
+		if err != nil {
+			logger.Error.Println("Could not solicit random peer for ONION_COVER")
+			return 0, nil, errors.New("APIError")
+		}
 		localPeer := net.ParseIP(config.P2p_hostname)
 		localPeerAddress := peerAddressToString(localPeer, localPeer.To4() == nil, uint16(config.P2p_port))
 		skipPeer := peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort) == localPeerAddress
 		for skipPeer {
-			err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey = api.RPSQuery()
-			skipPeer = peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort) == localPeerAddress
 			logger.Warning.Println("Destination peer solicited for ONION_COVER is ourselves, soliciting new one")
-		}
-		if err != nil {
-			logger.Error.Println("Could not solicit random peer for ONION_COVER")
-			return 0, nil, errors.New("APIError")
+			err, peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey = api.RPSQuery()
+			if err != nil {
+				logger.Error.Println("Could not solicit random peer for ONION_COVER")
+				return 0, nil, errors.New("APIError")
+			}
+			skipPeer = peerAddressToString(peerAddress, peerAddressIsIPv6, peerOnionPort) == localPeerAddress
 		}
 		// build tunnel
 		tunnelID, err := BuildTunnel(peerAddress, peerAddressIsIPv6, peerOnionPort, peerHostkey)
@@ -137,6 +141,10 @@ func handleAPIRequest(msgType uint16, data []byte) (uint32, []byte, error) {
 			}
 			err = sendIntoTunnel(tunnelID, append([]byte{MSG_COVER}, msgBuf...), false)
 			if err != nil {
+				err = destroyTunnel(tunnelID)
+				if err != nil {
+					logger.Error.Println("Could not close tunnel created by ONION_COVER")
+				}
 				logger.Error.Println("Could not send data for ONION_COVER")
 				return 0, nil, errors.New("TunnelError")
 			}

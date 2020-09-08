@@ -57,6 +57,7 @@ func getUDPAddrString(addr *net.UDPAddr) (string, error) {
 }
 
 func padPacket(in []byte) ([packetLength]byte, error) {
+	logger.Debug.Println("Padding packet of size " + strconv.Itoa(len(in)))
 	if len(in) > packetLength {
 		logger.Error.Println("Cannot pad packet longer than packetLength (" + strconv.Itoa(packetLength) + ")")
 		return [packetLength]byte{}, errors.New("invalidArgumentError")
@@ -237,8 +238,8 @@ func handleIncomingPacket(udpconn *net.UDPConn, addr *net.UDPAddr, data []byte, 
 // SendPacket sends a packet conforming to our onion hop layer protocol
 // Blocks until data is sent or an error is generated
 func SendPacket(sendingUDPConn *net.UDPConn, addr string, data []byte) error {
-	if len(data) > (packetLength - 7) {
-		logger.Error.Println("Packet too long")
+	if len(data) > (packetLength - 23) {
+		logger.Error.Println("Packet too long (length " + strconv.Itoa(len(data)) + ")")
 		return errors.New("invalidArgumentError")
 	}
 	receiverAddress, err := net.ResolveUDPAddr("udp", addr)

@@ -25,12 +25,17 @@ The system does not make any guarantees for the reliability of the data delivery
 All message are sent on a best-effort basis.
 For some delivery issues an error is returned, although the absence of an error does not indicate a successful delivery.
 
-The system cannot process more than 1000 bytes of data per packet. This is to ensure that IP fragmentation is kept to a minimum, increasing the probability that a packet is not lost on the way to the receiver.
-If you require more data per packet, you will need to implement your own fragmentation and reassembly system.
+The amount of data per packet that the system can handle is limited.
+All packets are fixed to a size of 1232 bytes and for each hop there is an additional overhead of 21 bytes per packet (16 bytes for cryptography data, 4 bytes sequence number and 1 byte message type).
+Additionally, 23 bytes of data are required between each hop for the Hop Layer header.
+Lastly, the TPort is used so that hops know to which tunnel an incoming packet belongs.
+Therefore, the maximum size a packet can be when three intermediate hops are used is:
 
-The system has been tested with two and three intermediate hops.
-Using more hops should work, however, the reliability will decrease and and we do not expect many more than three hops to work well in the current implementation.
-This is due to the limited number of bytes available for the onion layer headers required for each hop on the path.
+`1232 - 23 [Hop Layer Header] - 4 [3 intermediate hops and destination] * 21 [Onion Layer header] - 4 [TPort] = 1121` bytes.
+If you require more data per packet, you will need to implement your own fragmentation and reassembly system.
+Also, using more hops than three should work (although it will decrease the amount of data that can be sent per packet), however, the reliability will decrease due to the nature of sending more UDP packets that can get lost.
+
+
 
 # Testing
 To run all builtin tests execute `go test -v`
