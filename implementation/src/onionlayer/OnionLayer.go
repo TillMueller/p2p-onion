@@ -248,7 +248,7 @@ func watchForwarder(forwarder *storage.Forwarder, forwarderIdentifier string) {
 			}
 			storage.DeleteForwarder(forwarders, forwarderIdentifier)
 			logger.Debug.Println("Removed all information for forwarder " + forwarderIdentifier)
-			break
+			return
 		}
 		if forwarder.TType == storage.TUNNEL_TYPE_INITIATOR {
 			// we're the initiator so we're sending keepalives through the tunnel
