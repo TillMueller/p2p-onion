@@ -1,3 +1,6 @@
+# Full project reporting
+For a detailed final report see `docs/final_report.pdf`
+
 # Requirements
 To compile and use this program the following packages are required:
 - `libssl-dev`
@@ -34,7 +37,7 @@ All peers involved in the tests write their log files to `testing_setup/peer*/on
 Since debug logging is enabled, the logs can be used to keep track of the states of the peers.
 
 ## Note
-The tests might fail due to the unreliable characteristics of the UDP data transport, in which case warning about missed packets or repeated sequence numbers are printed to the console and the log file.
+The tests might intermittently fail due to the unreliable characteristics of the UDP data transport, in which case warnings about missed packets or repeated sequence numbers are printed to the console and log file.
 
 This does therefore not necessairly indicate an implementation error.
 

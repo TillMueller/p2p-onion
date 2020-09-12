@@ -108,6 +108,8 @@ Three tests are included with the program, implemented in \texttt{main\_test.go}
 To run all tests it is sufficient to execute \texttt{go test -v} in the \texttt{src} folder.
 A single test can be run by executing \texttt{go test -v -run [TEST]}.
 
+\noindent\emph{Note: The tests might intermittently fail due to the unreliable characteristics of the UDP data transport, in which case warnings about missed packets or repeated sequence numbers are printed to the console and log file.}
+
 \section{Limitations}
 The system has some limitations with regards to reliability and the amount of data that can be transmitted.
 Firstly, the system does not make any guarantees about the reliability of the data delivery, all message are sent on a best-effort basis.
