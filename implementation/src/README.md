@@ -33,6 +33,11 @@ Available tests are:
 All peers involved in the tests write their log files to `testing_setup/peer*/onion.log`.
 Since debug logging is enabled, the logs can be used to keep track of the states of the peers.
 
+## Note
+The tests might fail due to the unreliable characteristics of the UDP data transport, in which case warning about missed packets or repeated sequence numbers are printed to the console and the log file.
+
+This does therefore not necessairly indicate an implementation error.
+
 # Limitations
 The system does not make any guarantees for the reliability of the data delivery.
 All message are sent on a best-effort basis.
