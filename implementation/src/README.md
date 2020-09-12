@@ -39,7 +39,7 @@ Since debug logging is enabled, the logs can be used to keep track of the states
 ## Note
 The tests might intermittently fail due to the unreliable characteristics of the UDP data transport, in which case warnings about missed packets or repeated sequence numbers are printed to the console and log file.
 
-This does therefore not necessairly indicate an implementation error.
+This does therefore not necessarily indicate an implementation error.
 
 # Limitations
 The system does not make any guarantees for the reliability of the data delivery.
@@ -52,6 +52,6 @@ Furthermore, 23 bytes of data are required between each hop for the Hop Layer he
 Lastly, the TPort is used so that hops know to which tunnel an incoming packet belongs.
 Therefore, the maximum size a packet can be when three intermediate hops are used is:
 
-`1232 - 23 [Hop Layer Header] - 4 [3 intermediate hops and destination] * 21 [Onion Layer header] - 4 [TPort] = 1121` bytes.
+`1232 - 23 [Hop Layer header] - 4 [3 intermediate hops and destination] * 21 [Onion Layer header] - 4 [TPort] = 1121` bytes.
 If you require more data per packet, you will need to implement your own fragmentation and reassembly system.
 Also, using more hops than three should work (although it will decrease the amount of data that can be sent per packet), however, the reliability will decrease due to the nature of sending more UDP packets that can get lost.
