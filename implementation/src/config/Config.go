@@ -121,7 +121,7 @@ func LoadConfig(path string) error {
 		Intermediate_hops = default_intermediate_hops
 	}
 
-	hostkeyLocation := readStringFromConfig(section, "hostkey_location", default_hostkey_location)
+	hostkeyLocation := readStringFromConfig(section, "hostkey", default_hostkey_location)
 	if loadPrivateKeyFile(hostkeyLocation) != nil {
 		writeError("Could not load private key file: " + hostkeyLocation)
 		return errors.New("ConfigurationError")
